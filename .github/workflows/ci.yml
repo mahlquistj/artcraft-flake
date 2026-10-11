@@ -13,9 +13,13 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to full commit SHAs: `@v4`/`@V31`-style refs are exactly what broke
+      # the first run (GitHub cannot resolve a tag that does not exist). Resolve a
+      # new SHA with
+      #   curl -s https://api.github.com/repos/<owner>/<repo>/git/ref/tags/<tag> | jq -r .object.sha
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: cachix/install-nix-action@V31
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes

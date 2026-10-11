@@ -271,6 +271,12 @@
             };
           } "nixfmt --check $src && touch $out";
 
+          # The workflows are Nix-free, so this is the only thing standing between
+          # a mistyped action ref (the `@V31` bug) and a red CI run.
+          workflows = pkgs.callPackage ./tests/workflows-check.nix {
+            src = ./.github;
+          };
+
           prebuilt-eval = pkgs.callPackage ./tests/prebuilt-eval.nix {
             inherit products pins;
             systems = craftSystems;
