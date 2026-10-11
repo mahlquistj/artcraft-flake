@@ -609,11 +609,24 @@ Things P2 measured or forced, that the sketch did not anticipate:
   time, so `names` now comes from products.nix + pins.lock.json alone, and a
   product pinned only for other systems fails later with the builder's own
   "no `<system>` asset" message.
-- **`lib.mkMerge [ … [ … ] ]` does not work** ("cannot append list"), and
-  `nixosModules.artcraft` is a module *function*, not an `{options,config}`
-  attrset, so it cannot be combined by attribute either. Shipped form:
-  `nixosModules.default = [ self.nixosModules.artcraft self.nixosModules.crafts ]`
-  — a module list is itself a valid module, because `imports` is flattened.
+- **`imports` cannot contain a list.** `nixosModules.default = [ m1 m2 ]` looks
+  harmless and is not: a config writing `imports = [ flake.nixosModules.default ]`
+  nests a list inside a list, and nixpkgs rejects it outright ("Module imports
+  can't be nested lists. Perhaps you meant to remove one level of lists?") — a
+  real user hit this after updating the flake input. `lib.mkMerge` cannot help
+  either ("cannot append list"), and a module *function* cannot be combined by
+  attribute. Shipped form:
+  `nixosModules.default = { imports = [ self.nixosModules.artcraft self.nixosModules.crafts ]; }`
+  — an attrset module that imports the two.
+- **The coverage gap that let it ship.** `checks.nixos-crafts-module` passed the
+  module *unwrapped* (`modules = [ m ]`), so the nested-list form was never
+  exercised, and nothing forced `config.assertions` — which `system.build.toplevel`
+  evaluates on every real rebuild. Both are now part of the check: it imports the
+  way a config does (`{ imports = [ module ]; }`, with `module =
+  nixosModules.default`, so ArtCraft's module rides along), and it evaluates
+  `lib.all (a: a.assertion) config.assertions`. The home-manager harness imports
+  `homeModules.default` for the same reason. Lesson for this flake: a check must
+  evaluate the *documented entry point*, not the convenient internal shape.
 - **A config attrset built from another config value recurses.**
   `programs = genAttrs config.programs.crafts.enable (…)` deadlocks the definition
   push-down; the working form is static keys from the product list with

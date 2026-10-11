@@ -267,7 +267,7 @@ hundred MB.
       system = "x86_64-linux";
       modules = [
         ./configuration.nix
-        artcraft.nixosModules.default     # = artcraft + crafts (a module list)
+        artcraft.nixosModules.default     # = artcraft + crafts, as one module
         { programs.artcraft.enable = true; }
       ];
     };
