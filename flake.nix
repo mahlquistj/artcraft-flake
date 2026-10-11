@@ -57,7 +57,13 @@
         system:
         let
           pkgs = pkgsFor system;
-          paths = lib.attrValues (craftOf system);
+          # Both outputs: the runnable binaries and upstream's menu integration.
+          paths = lib.flatten (
+            map (p: [
+              p.out
+              p.desktop
+            ]) (lib.attrValues (craftOf system))
+          );
         in
         if paths == [ ] then
           null
@@ -95,7 +101,7 @@
     in
     {
       # The data the packages are generated from, re-usable by other flakes and CI:
-      #   nix eval --json .#craftProducts
+      #   nix eval --json .#products | jq 'keys'
       inherit products pins;
 
       # Adds `artcraft` plus every pinned Craft app to any package set, for
@@ -110,13 +116,31 @@
           system = prev.stdenv.hostPlatform.system;
         };
 
-      # NixOS: `programs.artcraft.enable = true;`
+      # NixOS: `programs.artcraft.enable = true;` (the source build).
       nixosModules.artcraft = import ./modules/nixos.nix;
-      nixosModules.default = self.nixosModules.artcraft;
+
+      # NixOS: `programs.<app>.enable` per Craft app, plus
+      # `programs.crafts.enable = [ … ]` and the xdg-desktop-portal warning.
+      nixosModules.crafts = import ./modules/crafts.nix;
+
+      # Both, for `imports = [ craft.nixosModules.default ];`. A module *list* is
+      # itself a valid module: the module system flattens `imports`, while
+      # lib.mkMerge refuses to merge module lists ("cannot append list").
+      nixosModules.default = [
+        self.nixosModules.artcraft
+        self.nixosModules.crafts
+      ];
 
       # home-manager: `programs.artcraft.enable = true;`
       homeModules.artcraft = import ./modules/home-manager.nix;
-      homeModules.default = self.homeModules.artcraft;
+      # home-manager: the same generated `programs.<app>` API as NixOS.
+      homeModules.crafts = import ./modules/crafts-home-manager.nix;
+
+      # Both, as above.
+      homeModules.default = [
+        self.homeModules.artcraft
+        self.homeModules.crafts
+      ];
 
       packages = forAllSystems (
         system:
@@ -182,6 +206,18 @@
         let
           pkgs = pkgsFor system;
           craft = craftOf system;
+          # Upstream's .desktop and AppStream, validated rather than authored: the
+          # metainfo test also proves the shipped <release version> matches the pin.
+          assetChecks = lib.mapAttrs' (
+            name: p:
+            lib.nameValuePair "desktop-assets-${name}" (
+              pkgs.linkFarmFromDrvs "craft-desktop-assets-${name}" [
+                p.passthru.tests.desktopEntry
+                p.passthru.tests.metainfo
+              ]
+            )
+          ) craft;
+
           # Display-free loader test: every <app>-cli in the closure must answer
           # --version. This is what a builder without a GPU can actually verify.
           smokes = lib.mapAttrs' (
@@ -245,8 +281,19 @@
                 system = sys;
               };
           };
+
+          # Generated NixOS module: does programs.crafts.enable actually install
+          # every product's out + desktop output, and does the portal reminder
+          # stay quiet when a portal is configured?
+          nixos-crafts-module = pkgs.callPackage ./tests/nixos-module-check.nix {
+            # nixosSystem lives on the flake input lib, not on pkgs.lib.
+            lib = nixpkgs.lib;
+            craftPackages = craft;
+            module = self.nixosModules.crafts;
+          };
         }
         // smokes
+        // assetChecks
       );
     };
 }
