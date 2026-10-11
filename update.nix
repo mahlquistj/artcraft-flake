@@ -138,7 +138,7 @@ writeShellApplication {
     fi
 
     if [[ -z "$DATE" ]]; then
-      DATE="$(curl -fsSL "$API/commits/$REV" | jq -r '.commit.committer.date // empty' | cut -dT -f1)"
+      DATE="$(curl -fsSL "$API/commits/$REV" | jq -r '.commit.committer.date // empty' | cut -dT -f1 || true)"
       [[ -n "$DATE" ]] || DATE="$(date -u +%Y-%m-%d)"
     fi
     echo "    rev  = $REV"
@@ -146,7 +146,7 @@ writeShellApplication {
 
     # Crate version straight from the pinned commit (no store round-trip needed).
     NEW_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/$OWNER/$REPO/$REV/artcraft-native/Cargo.toml" \
-      | grep -m1 -E '^version' | tr -d '"' | sed -E 's/version[[:space:]]*=[[:space:]]*//')"
+      | grep -m1 -E '^version' | tr -d '"' | sed -E 's/version[[:space:]]*=[[:space:]]*//' || true)"
     if [[ -n "$NEW_VERSION" ]]; then
       VERSION="$NEW_VERSION"
       echo "    version = $VERSION"

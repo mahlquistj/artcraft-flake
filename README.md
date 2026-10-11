@@ -1,151 +1,201 @@
 # artcraft-flake
 
-[Nix flake](https://nixos.wiki/wiki/Flakes) that builds **ArtCraft**
-(<https://github.com/storytold/artcraft>) from source for Linux.
+A Nix flake that builds **ArtCraft** (https://github.com/storytold/artcraft) from
+source for Linux: the `artcraft-native` crate, i.e. the pure-Rust egui desktop
+client (no Tauri, no webview, no Node.js).
 
-## Why a source build?
+## Why build from source?
 
-ArtCraft's GitHub releases ship only macOS (`.dmg`, `.app.tar.gz`) and Windows
-(`.exe`, `.msi`) installers — there are no Linux binaries, and CI only publishes
-those two platforms. Upstream also says Linux is supported when building from
-source (`_docs/dev_setup.md`).
+ArtCraft's GitHub releases only ship macOS and Windows binaries —
+`ArtCraft_<ver>_universal.dmg`, `ArtCraft_universal.app.tar.gz`,
+`ArtCraft_<ver>_x64-setup.exe`, `ArtCraft_<ver>_x64_en-US.msi` — and their CI
+(`.github/workflows/artcraft-{macos,windows}-publish.yml`) publishes nothing for
+Linux. There is no AppImage/deb/rpm/tar.xz to download, so a Linux package has
+to compile the Rust workspace.
 
-The full app is a Tauri + React/Vite/Nx desktop client. This flake instead builds
-`artcraft-native`, the upstream **pure-Rust egui client** (no Tauri, no webview,
-no Node.js):
+Two clients live in that workspace:
 
-| | |
-|---|---|
-| Upstream crate | `artcraft-native` (`artcraft_native`, binary `artcraft-native`) |
-| What it supports | Create Image / Video / Audio, feed, library, lightbox, characters, sign-in |
-| What it does **not** need | Node, npm, Nx, Vite, `cargo-tauri`, webkit2gtk |
-| Not in this flake | The Tauri app (`crates/desktop/artcraft`) — needs the JS toolchain |
+| Crate | What it is | Needs |
+|---|---|---|
+| `crates/desktop/artcraft` | the official Tauri app | Node 20+, npm, Nx, Vite, `cargo-tauri`, webkit2gtk |
+| `artcraft-native` (**this flake**) | egui desktop app over the same API client crates | Rust + a few C libraries |
 
-`artcraft-native` exists only on `main`, not in any release tag, so the flake pins
-a **commit on `main`** instead of a tag.
+`artcraft-native` covers Create Image / Create Video / Create Audio, the feed,
+library, lightbox, characters and sign-in. It is the practical way to get a
+native ArtCraft binary on a NixOS desktop without a JavaScript toolchain.
+Want the Tauri app instead? See "Packaging the Tauri app" below.
+
+`artcraft-native` does not exist in any release tag (checked: `artcraft-v0.41.0`,
+the newest at the time of writing), so `pins.nix` pins a commit on `main`.
 
 ## Layout
 
 ```
-flake.nix               outputs: packages, overlay, nixosModules, homeModules, devShell, apps
-pins.nix                rev / date / version / srcHash / cargoHash  <- the only file you edit to bump
-pkg/artcraft.nix        rustPlatform.buildRustPackage derivation
-update.nix              nix run .#update-pins: re-resolves all of the above
-modules/nixos.nix       programs.artcraft NixOS module
-modules/home-manager.nix programs.artcraft home-manager module
+flake.nix            outputs: packages, overlay, nixosModules, homeModules, devShell, apps, checks
+pins.nix             owner/repo/branch/rev/date/version/srcHash/cargoHash
+pkg/artcraft.nix     rustPlatform.buildRustPackage derivation
+pkg/desktopItem.nix  makeDesktopItem menu entry (NixOS side)
+update.nix           `nix run .#update-pins` — re-resolves rev + hashes
+modules/nixos.nix    programs.artcraft (NixOS)
+modules/home-manager.nix  programs.artcraft (home-manager)
+tests/nixos-eval.nix eval-only smoke test for the NixOS module
 ```
 
-## Use it
-
-Run it once, no install:
+## Try it
 
 ```bash
-nix run .#artcraft
+nix run .#artcraft            # or: nix build .#artcraft && ./result/bin/artcraft
+nix build .#artcraft          # result/bin/artcraft (also result/bin/artcraft-native)
+nix flake check               # builds the package + menu entry, runs nixfmt --check
+nix develop                   # cargo/clippy/rustc/rustfmt/rust-analyzer + native libs
 ```
 
-Install it into your profile (ad-hoc):
+The app has no CLI flags: it opens a window and signs you in. `--help` is passed
+straight through to egui and ignored.
 
-```bash
-nix profile install path:$PWD#artcraft   # or git+https://your-host/artcraft-flake
-```
+The build takes about a minute once the crates are vendored; the first fetch
+downloads the whole workspace lockfile (Tauri and friends included), a few
+hundred MB.
 
-Pin the source in another flake:
+## Install it
+
+**NixOS module** (`programs.artcraft.enable`):
 
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    artcraft.url = "git+file:///home/maj/projects/artcraft-flake"; # or your GitHub URL
+    artcraft.url = "github:YOU/artcraft-flake";   # or "git+file:///home/maj/projects/artcraft-flake"
   };
 
   outputs = { nixpkgs, artcraft, ... }: {
-    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+    nixosConfigurations.desktop = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
         ./configuration.nix
         artcraft.nixosModules.artcraft
-        { nixpkgs.overlays = [ artcraft.overlays.default ]; programs.artcraft.enable = true; }
+        { programs.artcraft.enable = true; }
       ];
     };
   };
 }
 ```
 
-Just the package, via the overlay:
+**home-manager module:**
 
 ```nix
 {
-  nixpkgs.overlays = [ artcraft.overlays.default ];
-  environment.systemPackages = [ pkgs.artcraft ];   # NixOS
-  # home.packages             = [ pkgs.artcraft ];  # home-manager
+  imports = [ artcraft.homeModules.artcraft ];
+  programs.artcraft = {
+    enable = true;
+    desktopEntry = true;         # app-menu entry, default true
+    # package = pkgs.artcraft;   # or your own derivation
+  };
 }
 ```
 
-### NixOS / home-manager module
+`programs.artcraft.enable` installs the package and a desktop entry. NixOS has no
+`xdg.desktopEntries` option, so the NixOS module adds a `makeDesktopItem`
+package to `environment.systemPackages`; the home-manager module uses
+`xdg.desktopEntries` (and enables `xdg.enable` for you).
+
+**Overlay**, if you just want `pkgs.artcraft`:
 
 ```nix
-programs.artcraft = {
-  enable = true;
-  # package = pkgs.artcraft;      # defaults to the flake's package
-  desktopEntry = true;            # app-menu entry (default)
-};
+nixpkgs.overlays = [ artcraft.overlays.default ];
+environment.systemPackages = [ pkgs.artcraft ];
 ```
 
-Installs the package, adds an `ArtCraft` desktop entry, and puts
-`share/artcraft/artcraft.png` on disk for the icon.
-
-### First launch / credentials
-
-Per upstream's `artcraft-native/README.md`:
-
-- Sign-in: username + password, **"Sign in with browser"** (device code), or the
-  app imports an existing session from the Tauri app's cookie jar
-  (`<cache dir>/ai.artcraft.app/.cookies`).
-- Its own credentials: `~/Artcraft/credentials/native_session.json`
-- API host overrides: `~/Artcraft/settings/env_configs.json`
-
-## Bumping the version
+**Ad-hoc, no config:**
 
 ```bash
-nix run .#update-pins                      # track HEAD of pins.branch (main)
-ARTCRAFT_REF=artcraft-v0.41.0 nix run .#update-pins   # a tag, if it contains artcraft-native
-ARTCRAFT_REV=<full-sha> nix run .#update-pins
+nix profile install path:.#artcraft
 ```
 
-The script resolves the rev, then lets Nix compute the hashes by running each
-fetch stage with a deliberately wrong hash and scraping the `got: sha256-…` line.
-It writes `rev`, `date`, `version`, `srcHash`, `cargoHash` into `pins.nix`
-(`sed` on those exact lines — don't reformat them), then verifies with a full
-`nix build .#artcraft` before reporting success.
-
-Keep the three fetches cached if you re-run often:
+## Updating the pins
 
 ```bash
-nix build .#artcraft          # vendored crates + build artifacts land in the store
+nix run .#update-pins                                     # HEAD of pins.branch
+ARTCRAFT_REF=artcraft-v0.42.0 nix run .#update-pins       # a tag that has the crate
+ARTCRAFT_REV=<full-sha> nix run .#update-pins             # an exact commit
+ARTCRAFT_DATE=2026-11-01 nix run .#update-pins            # skip the GitHub API lookup
 ```
 
-## Notes / caveats
+`update-pins` never hand-computes a hash. It writes a deliberately wrong hash
+into `pins.nix`, runs `nix build .#artcraft`, scrapes Nix's `got: sha256-…` line
+from the fixed-output mismatch, and repeats for `srcHash` then `cargoHash`.
+Finally it builds once more with the real hashes and only exits 0 if that
+succeeds — so a rev that fails to compile is reported rather than silently
+pinned. `pins.nix` is regenerated from shell variables, so its comments and
+layout stay stable across runs.
 
-- `cargoHash` covers `cargo vendor` of the **whole workspace lockfile**, including
-  the Tauri and `sqlx`/`wreq` dependencies that this build never compiles. First
-  fetch is a few hundred MB.
-- `doCheck = false`: the workspace's default member is the Tauri app, so a bare
-  `cargo test` would try to build it. Run native tests in `nix develop`:
+## What the derivation does
+
+- `cargoBuildFlags = [ "--package" "artcraft_native" ]` — the workspace's
+  `default-members` is the Tauri app, so the package must be selected explicitly.
+- `installPhase` picks the binary out of `target/<triple>/release/` (the cargo
+  build hook passes `--target`) and installs upstream's app icons
+  (`crates/desktop/artcraft/icons/`) into `$out/share/{artcraft,icons/hicolor}`.
+- `doCheck = false` — plain `cargo test` would try to build the Tauri crate and
+  the frontend; run the Rust tests in `nix develop` with
   `cargo test --package artcraft_native`.
-- Runtime: needs OpenGL (Mesa / your GPU driver) and an X11 or Wayland session.
-  In-app video playback additionally uses the `ffmpeg`/`ffprobe` put on `PATH` by
-  the wrapper, and "open in browser" uses `xdg-open` (also wrapped).
-- `LD_LIBRARY_PATH` is set by the wrapper for libraries that the Rust bindings
-  `dlopen` rather than link (Wayland, X11, Mesa).
-- The `open` crate needs `xdg-open`; the wrapper adds `xdg-utils` to `PATH`.
-- macOS: not packaged here — upstream's `.dmg` / `ArtCraft_universal.app.tar.gz`
-  assets are the way to go. Adding them as a fixed-output derivation on
-  `aarch64-darwin`/`x86_64-darwin` is straightforward if you want it.
+- `makeWrapper` around the binary:
+  - `LD_LIBRARY_PATH` gets the libs that the Rust bindings `dlopen` instead of
+    linking (Wayland, X11, Mesa).
+  - `PATH` gets `ffmpeg`/`ffprobe` (in-app video playback shells out to them) and
+    `xdg-open` (the `open` crate).
+- `meta.mainProgram = "artcraft"`, so `nix run` and `lib.getExe` hit the wrapper.
+  Both `artcraft` and `artcraft-native` exist in `$out/bin`.
+- Release profile gets `LTO = "thin"` and `codegenunits = 16`; a full `lto = true`
+  build costs several minutes for little gain on a GUI app.
 
-## Development
+## Sign-in and settings (upstream behaviour)
 
-```bash
-nix develop            # cargo, clippy, rustc, rustfmt, rust-analyzer + native libs
-nix flake check        # builds .#artcraft and runs nixfmt --check
-nix build .#artcraft
-```
+- Session: reused from the Tauri app's cookie jar
+  (`<cache dir>/ai.artcraft.app/.cookies`), stored in
+  `~/Artcraft/credentials/native_session.json`, or via "Sign in with browser" /
+  username + password.
+- API host: `~/Artcraft/settings/env_configs.json`.
+- Diagnostics env vars: `ARTCRAFT_SCREENSHOT=/tmp/x.png`, `ARTCRAFT_PAGE`,
+  `ARTCRAFT_SCREENSHOT_EXIT=1`.
+
+## Caveats
+
+- **`aarch64-linux` is unevaluated here.** `cargo vendor` pulls every target in
+  `Cargo.lock` (we saw `windows-sys`, `wit-component`, ... in the vendor log), so
+  `cargoHash` is host-independent in practice — but if `nix build .#artcraft`
+  on aarch64 reports a different hash, run `nix run .#update-pins` there and
+  compare.
+- **First build is heavy.** Vendoring the workspace lockfile (Tauri, `sqlx`,
+  `wreq` and other crates this build never compiles) is a few hundred MB.
+- **Wayland decorations**: the app draws its own title bar
+  (`with_decorations(false)`), so it behaves like a client-side-decorated window;
+  nothing extra is needed on NixOS, but you do need a GL driver (Mesa or your
+  GPU's package) available at runtime — the wrapper ships Mesa libs in
+  `LD_LIBRARY_PATH`, while hardware drivers come from your own config.
+- The app is a network client: it does nothing useful without an ArtCraft
+  account/API access.
+
+## Packaging the Tauri app instead
+
+If you need the full official app (all pages, 3D scene tools), build
+`crates/desktop/artcraft`: `buildNpmPackage`/`npmBuild` for `frontend/`, then
+`rustPlatform.buildRustPackage` with `cargoBuildFlags = [ "--package" "artcraft" ]`,
+`webkit2gtk_4_1`, `wrapGAppsHook3`, `cargo-tauri` and the `dist` folder the
+Tauri config expects. Upstream's entry point is
+`./script/artcraft/unix_dev.sh` (dev) and `_docs/dev_setup.md`.
+
+## Wrapping the macOS app (not implemented)
+
+macOS hosts can skip compiling: `fetchurl` the release asset
+(`ArtCraft_<ver>_universal.app.tar.gz` or `..._universal.dmg`) with its
+`sha256`, unpack it in a fixed-output derivation, move `ArtCraft.app` into
+`$out/Applications`, and gate the package on `stdenv.hostPlatform.isDarwin`.
+Since the bundle is already signed and notarised upstream, don't re-sign it; the
+usual Gatekeeper/quarantine caveats apply to any download.
+
+## License
+
+`MIT` for this flake (see `LICENSE`). ArtCraft itself is dual-licensed
+MIT/Apache-2.0 with third-party notices in its `NOTICE` file; the fonts it
+bundles are under the SIL OFL.

@@ -6,6 +6,8 @@
   outputs =
     { self, nixpkgs }:
     let
+      # x86_64-linux is what this flake is built and run on; aarch64-linux is
+      # evaluated (see `nix flake show`/checks) but not exercised here.
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -17,7 +19,7 @@
           inherit system;
           overlays = [ self.overlays.default ];
         };
-      allNixFiles = nixpkgs.lib.fileset.unions [
+      nixFiles = nixpkgs.lib.fileset.unions [
         ./flake.nix
         ./pins.nix
         ./update.nix
@@ -27,21 +29,17 @@
       ];
     in
     {
-      # Adds `artcraft` (and the app's menu entry helper) to any package set, so
-      # the app can be installed with an overlay instead of `nix run`.
-      overlays.default = final: prev: {
-        artcraft = final.callPackage ./pkg/artcraft.nix { };
-        artcraft-desktop-item = final.callPackage ./pkg/desktopItem.nix {
-          package = final.artcraft;
-        };
-      };
+      # Adds `artcraft` to any package set, for installing through an overlay
+      # (home-manager, NixOS `nixpkgs.overlays`, dev shells, ...).
+      overlays.default = final: prev: { artcraft = final.callPackage ./pkg/artcraft.nix { }; };
 
+      # NixOS: `programs.artcraft.enable = true;`
       nixosModules.artcraft = import ./modules/nixos.nix;
       nixosModules.default = self.nixosModules.artcraft;
 
+      # home-manager: `programs.artcraft.enable = true;`
       homeModules.artcraft = import ./modules/home-manager.nix;
-      homeManagerModules.artcraft = self.homeModules.artcraft;
-      homeManagerModules.default = self.homeModules.artcraft;
+      homeModules.default = self.homeModules.artcraft;
 
       packages = forAllSystems (
         system:
@@ -58,13 +56,23 @@
         }
       );
 
-      apps = forAllSystems (system: {
-        default = {
-          type = "app";
-          program = "${self.packages.${system}.artcraft}/bin/artcraft";
-        };
-        artcraft = self.apps.${system}.default;
-      });
+      apps = forAllSystems (
+        system:
+        let
+          artcraftApp = {
+            type = "app";
+            program = "${self.packages.${system}.artcraft}/bin/artcraft";
+            meta = {
+              description = "Run the ArtCraft desktop app";
+              mainProgram = "artcraft";
+            };
+          };
+        in
+        {
+          default = artcraftApp;
+          artcraft = artcraftApp;
+        }
+      );
 
       devShells = forAllSystems (
         system:
@@ -92,8 +100,6 @@
         }
       );
 
-      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
-
       checks = forAllSystems (
         system:
         let
@@ -101,12 +107,12 @@
         in
         {
           package = pkgs.artcraft;
-          desktopItem = pkgs.artcraft-desktop-item;
+          desktopItem = pkgs.callPackage ./pkg/desktopItem.nix { package = pkgs.artcraft; };
           nixfmt = pkgs.runCommand "artcraft-flake-nixfmt" {
             nativeBuildInputs = [ pkgs.nixfmt ];
             src = pkgs.lib.fileset.toSource {
               root = ./.;
-              fileset = allNixFiles;
+              fileset = nixFiles;
             };
           } "nixfmt --check $src && touch $out";
         }

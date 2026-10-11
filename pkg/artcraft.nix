@@ -128,7 +128,7 @@ rustPlatform.buildRustPackage {
       mit
       asl20
     ];
-    mainProgram = "artcraft-native";
+    mainProgram = "artcraft";
     platforms = platforms.linux;
     sourceProvenance = with sourceTypes; [ fromSource ];
     maintainers = [ ];
