@@ -34,8 +34,9 @@ let
     inherit system;
     modules = [
       { nixpkgs.pkgs = pkgs; }
-      flake.nixosModules.artcraft
-      flake.nixosModules.crafts
+      # The documented entry point (artcraft + crafts in one module), imported the
+      # way a config does rather than passed bare.
+      { imports = [ flake.nixosModules.default ]; }
       {
         networking.hostName = "craft-test";
         fileSystems."/".device = "/dev/sda1";
@@ -47,8 +48,12 @@ let
         programs.photocraft.enableDesktopEntry = false;
         programs.cadcraft.enable = false;
 
-        # Flip to false to watch the xdg-desktop-portal reminder fire.
-        xdg.portal.enable = true;
+        # With a backend, or nixpkgs' own portal assertion fails once something
+        # forces config.assertions (which expect.assertionsHold now does).
+        xdg.portal = {
+          enable = true;
+          extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
+        };
       }
     ];
   };
@@ -63,11 +68,15 @@ let
   # name *after* a dash rather than a prefix.
   has = name: lib.any (n: lib.hasInfix "-${name}-" n) installed;
   hasDesktop = name: lib.any (n: lib.hasInfix "-${name}-" n && lib.hasSuffix "-desktop" n) installed;
+
+  # In the let, not in the result set: `expect = { x = x; }` would be a
+  # self-reference and a sibling attribute is not lexical scope in Nix.
+  allAssertionsHold = lib.all (a: a.assertion) sys.config.assertions;
 in
 {
   inherit installed;
   inherit (sys.config) warnings;
-  assertionsHold = lib.all (a: a.assertion) sys.config.assertions;
+  assertionsHold = allAssertionsHold;
 
   # What this harness claims about the module, as evaluable booleans:
   #   nix eval --impure -f tests/nixos-eval.nix expect.<key>
@@ -81,6 +90,13 @@ in
     photocraftBinary = has "photocraft";
     photocraftDesktopOff = !(hasDesktop "photocraft");
     cadcraftOff = !(has "cadcraft");
-    noWarnings = sys.config.warnings == [ ];
+    # Every assertion holds, ours and nixpkgs' (this is what a rebuild forces).
+    assertions = allAssertionsHold;
+    # Only *our* portal reminder must be absent; nixpkgs adds its own advice about
+    # portal backends, so a bare "no warnings at all" claim is not the contract.
+    craftWarningAbsent =
+      !lib.any (
+        w: lib.hasInfix "xdg-desktop-portal" w && lib.hasInfix "The Craft apps" w
+      ) sys.config.warnings;
   };
 }

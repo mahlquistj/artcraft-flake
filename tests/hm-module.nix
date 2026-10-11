@@ -35,8 +35,11 @@ let
   ev = hm.lib.homeManagerConfiguration {
     inherit pkgs;
     modules = [
-      ac.homeModules.artcraft
-      ac.homeModules.crafts
+      # The documented shape, and the one that broke in the field: a
+      # list-valued `homeModules.default` becomes a nested list inside `modules`
+      # and nixpkgs refuses it. Importing the individual modules here would hide
+      # that again.
+      ac.homeModules.default
       (_: {
         home.username = "maj";
         home.homeDirectory = "/home/maj";
@@ -71,11 +74,20 @@ let
     ) ev.config.home.packages
   );
 
+  # Forced: home-manager runs its own `assertions` at activation time, exactly as
+  # NixOS does at toplevel, and package listings never touch them.
+  assertionsHold = lib.all (a: a.assertion) (ev.config.assertions or [ ]);
+
   has = name: lib.any (n: lib.hasInfix "-${name}-" n) installed;
   hasDesktop = name: lib.any (n: lib.hasInfix "-${name}-" n && lib.hasSuffix "-desktop" n) installed;
 in
 {
-  inherit hmEntry installed craftNames;
+  inherit
+    hmEntry
+    installed
+    craftNames
+    assertionsHold
+    ;
 
   options = {
     exe = entry.exec;
@@ -102,5 +114,9 @@ in
     portalWarn = lib.any (
       w: lib.hasInfix "xdg-desktop-portal" w && lib.hasInfix "The Craft apps" w
     ) ev.config.warnings;
+
+    # Home-manager evaluates these at activation; nothing else in this harness
+    # would, so a bad assertion here is a broken user config in the field.
+    assertions = assertionsHold;
   };
 }

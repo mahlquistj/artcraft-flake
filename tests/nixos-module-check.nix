@@ -1,10 +1,19 @@
 # Eval-time contract test for the generated NixOS module, wired into
 # `nix flake check` as checks.<system>.nixos-crafts-module.
 #
-# It builds no system: it evaluates a nixosSystem that enables every published
-# product, asserts that the module put exactly the expected store paths into
+# It builds no system, but it evaluates the two things a real rebuild evaluates
+# and a package listing does not: the module *import shape* a user writes, and
+# `config.assertions`. Both were blind spots once:
+#
+#   - `nixosModules.default` was a list, so `imports = [ …default ]` became a
+#     nested list and nixpkgs rejected it ("Module imports can't be nested
+#     lists"). Passing the module the way a config does is therefore the point.
+#   - nothing forced `config.assertions`, which `system.build.toplevel` does on
+#     every real build, so a bad assertion in our module would have shipped.
+#
+# Then it asserts that the module put exactly the expected store paths into
 # `environment.systemPackages` — one binary output plus one desktop output per
-# app — and then links those paths, so the check also *builds* what the module
+# app — and links those paths, so the check also *builds* what the module
 # installs. A module that silently installs nothing (bad filter, missing option,
 # mkDefault losing) fails here instead of on someone's `nixos-rebuild`.
 {
@@ -21,12 +30,30 @@ let
     inherit system;
     modules = [
       { nixpkgs.pkgs = pkgs; }
-      module
+      # The documented usage, not the bare module.
+      { imports = [ module ]; }
       {
-        # A portal is what the module warns about; enabling it keeps this check
-        # about the packages, not about the reminder.
-        xdg.portal.enable = true;
+        # A portal is what the module warns about; configuring one properly keeps
+        # this check about the packages. (Properly = with a backend: nixpkgs
+        # asserts when enable is true and extraPortals is empty, and this check
+        # forces config.assertions, so the first run of it caught exactly that.)
+        xdg.portal = {
+          enable = true;
+          extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
+        };
+
         programs.crafts.enable = names;
+
+        # Enough of a real system that config.assertions is about *our* module and
+        # not about nixpkgs' "you configured no bootloader/filesystem" assertions —
+        # forcing assertions is pointless if the config cannot pass them.
+        system.stateVersion = "26.11";
+        networking.hostName = "craft-check";
+        fileSystems."/" = {
+          device = "/dev/disk/by-label/nixos";
+          fsType = "ext4";
+        };
+        boot.loader.grub.device = "/dev/vda";
       }
     ];
   };
@@ -46,6 +73,10 @@ let
     n: !lib.any (b: lib.hasInfix "-${n}-" b && lib.hasSuffix "-desktop" b) basenames
   ) names;
 
+  # Forced on purpose (this is the line that evaluates every assertion, ours and
+  # nixpkgs').
+  assertionsHold = lib.all (a: a.assertion) sys.config.assertions;
+
   problems = lib.filter (s: s != "") [
     (lib.optionalString (builtins.length installed != expected) ''
       expected ${toString expected} store paths (out + desktop for each of
@@ -54,15 +85,12 @@ let
     (lib.optionalString (missingPairs != [ ]) ''
       no desktop output installed for: ${lib.concatStringsSep ", " missingPairs}.
     '')
-    (
-      # Our module's refusal is the assertion that matters; a full nixosSystem
-      # carries hundreds of nixpkgs assertions and this config sets none of the
-      # options they want, so ask the packages themselves instead of scanning
-      # assertion text.
-      lib.optionalString (lib.any (n: craftPackages.${n}.meta.broken or false) names) ''
-        the builder marks at least one product broken on ${system} (glibc floor).
-      ''
-    )
+    (lib.optionalString (lib.any (n: craftPackages.${n}.meta.broken or false) names) ''
+      the builder marks at least one product broken on ${system} (glibc floor).
+    '')
+    (lib.optionalString (!assertionsHold) ''
+      some config.assertion does not hold on ${system}.
+    '')
     (
       # The reminder must not fire when a portal is configured; if it does, the
       # warning condition is wrong.

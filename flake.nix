@@ -123,24 +123,29 @@
       # `programs.crafts.enable = [ … ]` and the xdg-desktop-portal warning.
       nixosModules.crafts = import ./modules/crafts.nix;
 
-      # Both, for `imports = [ craft.nixosModules.default ];`. A module *list* is
-      # itself a valid module: the module system flattens `imports`, while
-      # lib.mkMerge refuses to merge module lists ("cannot append list").
-      nixosModules.default = [
-        self.nixosModules.artcraft
-        self.nixosModules.crafts
-      ];
+      # Both, for `imports = [ craft.nixosModules.default ];`. It must NOT be a
+      # list: `imports` is itself a list, so a list here is a *nested* list, which
+      # the module system rejects outright ("Module imports can't be nested
+      # lists"). An attrset module carrying `imports` is the composable form.
+      nixosModules.default = {
+        imports = [
+          self.nixosModules.artcraft
+          self.nixosModules.crafts
+        ];
+      };
 
       # home-manager: `programs.artcraft.enable = true;`
       homeModules.artcraft = import ./modules/home-manager.nix;
       # home-manager: the same generated `programs.<app>` API as NixOS.
       homeModules.crafts = import ./modules/crafts-home-manager.nix;
 
-      # Both, as above.
-      homeModules.default = [
-        self.homeModules.artcraft
-        self.homeModules.crafts
-      ];
+      # Both, as above: an attrset module with `imports`, never a list.
+      homeModules.default = {
+        imports = [
+          self.homeModules.artcraft
+          self.homeModules.crafts
+        ];
+      };
 
       packages = forAllSystems (
         system:
@@ -272,7 +277,7 @@
           } "nixfmt --check $src && touch $out";
 
           # The workflows are Nix-free, so this is the only thing standing between
-          # a mistyped action ref (the `@V31` bug) and a red CI run.
+          # a mistyped action ref and a red CI run.
           workflows = pkgs.callPackage ./tests/workflows-check.nix {
             src = ./.github;
           };
@@ -289,13 +294,14 @@
           };
 
           # Generated NixOS module: does programs.crafts.enable actually install
-          # every product's out + desktop output, and does the portal reminder
-          # stay quiet when a portal is configured?
+          # every product's out + desktop output, is nixosModules.default usable in
+          # the `imports = [ ... ]` shape a real config writes (a list there is a
+          # nested list, which nixpkgs rejects), and do the module assertions hold?
           nixos-crafts-module = pkgs.callPackage ./tests/nixos-module-check.nix {
             # nixosSystem lives on the flake input lib, not on pkgs.lib.
             lib = nixpkgs.lib;
             craftPackages = craft;
-            module = self.nixosModules.crafts;
+            module = self.nixosModules.default;
           };
         }
         // smokes
