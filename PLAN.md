@@ -1,9 +1,9 @@
 # PLAN: packaging the whole Craft App suite
 
-Status: **P0 done on 2026-10-11** (see §8 for what actually got built and where it
-differs from the sketch). Everything under "Verified" was
-measured on this machine (NixOS 26.11, x86_64-linux, niri/Wayland, AMD Navi 48)
-on 2026-10-11.
+Status: **P0 + P1 done on 2026-10-11** — see §8 (what P0 shipped, and where it
+differs from the sketch) and §9 (the binary audit that corrected the wrapper
+metadata). Everything under "Verified" was measured on this machine (NixOS 26.11,
+x86_64-linux, niri/Wayland, AMD Navi 48) on 2026-10-11.
 
 Goal: one flake that installs any app in storytold's "Craft" suite, with the same
 pin/update discipline we already use for ArtCraft.
@@ -518,3 +518,54 @@ minimisation, P2's generated `programs.<app>` modules and metainfo validation
   file, shared-mime-info, glib, ~180 MB total). `needsXdgUtils` is therefore a
   per-product flag (default true, because the `open` crate shells out to
   `xdg-open`) so P1 can weigh dropping it, and `craft-suite` stays opt-in.
+
+---
+
+## 9. P1 outcome (2026-10-11): all twelve products, metadata corrected by audit
+
+`nix run .#update -- --all` adopted the other eleven products; all twelve build,
+`nix flake check` runs twelve `smoke-<app>` checks (`<app>-cli --version` plus the
+wrapper/interpreter assertions) and the eval-only `prebuilt-eval` across
+x86_64/aarch64/riscv64. Upstream's twelve `.desktop` files pass
+`desktop-file-validate` unmodified, so P2 has nothing to fix there.
+
+`tests/wrapper-audit.sh` (new) prints, per product: `readelf -d` NEEDED, the
+sonames the binary dlopens, ALSA/PipeWire hits, external commands, the
+`<APP>_*` env surface and the shipped desktop entry. That replaced §5.6's guesses:
+
+- **ALSA is DT_NEEDED, not dlopened**, and only in **deckcraft, effectcraft,
+  filmcraft, soundcraft**. `needsAlsa` now means exactly that; the wrapper's
+  `LD_LIBRARY_PATH` is what satisfies a link-time dep on a foreign binary.
+- **No product references ffmpeg or ffprobe** (§5.6 assumed three). `needsFfmpeg`
+  is off everywhere; the flag stays for future releases. ArtCraft's source build
+  remains the only package that shells out to ffmpeg.
+- **Every product references `xdg-open`**, so `needsXdgUtils` is on for all — and
+  that single flag is what makes a closure 375 MB instead of ~150 MB (perl, file,
+  shared-mime-info and glib arrive with xdg-utils). If store size ever matters,
+  the cheap win is a lighter `xdg-open` than xdg-utils, not dropping the libs.
+- **`<APP>_SKIP_LIB_CHECK` exists only in photocraft**; the other eleven have no
+  preflight escape hatch. Irrelevant to us (the closure satisfies the loader) but
+  it means §1's "the app checks for those libraries itself" is photocraft-specific.
+- **A missing `libvulkan.so.1` string is not evidence of a GL-only app.** pdfcraft
+  has no such string yet its log says `renderer: wgpu; adapter: … (Vulkan)`, so
+  vulkan-loader stays in the base closure for all twelve; libxrender was added for
+  pdfcraft's `libXrender.so.1` dlopen.
+- **filmcraft hardware decode**: dlopens `libva.so.2`/`libva-drm.so.2` (+ NVIDIA
+  NVDEC/encode). Absent, it logs "no VA-API hardware decoding" and software
+  decodes — graceful. Fix is system-side (`hardware.graphics.extraPackages`
+  putting libva + the VA-API driver in `/run/opengl-driver/lib`), *not* store
+  libva next to the system driver: that is the mesa/libglvnd skew in
+  README/Troubleshooting.
+- Runtime launches: **soundcraft** (ALSA device opens at 48 kHz), **filmcraft**
+  (VA-API/NVDEC degrade as above), **pdfcraft** (RADV Vulkan adapter) — i.e. the
+  three products whose binaries differ materially from photocraft's. Per the
+  agreed scope, the other eight stay build + CLI verified.
+
+`products.nix` became `defaults // { … }` per product with a `notes` field (now in
+each package's `meta.longDescription`) and `verified = { atVersion, runtime; }`, so
+"what did you actually measure, on which version" is machine-readable.
+
+Next (P2): generated `modules/crafts.nix` (`programs.<app>.enable` per product,
+portal reminder), metainfo validation in `passthru.tests` — `appstream-glib` in
+this nixpkgs ships no CLI any more, use `pkgs.appstream` (`appstreamcli`) — and a
+weekly `nix run .#update -- --dry-run` CI job.

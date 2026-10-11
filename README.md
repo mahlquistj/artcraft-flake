@@ -22,8 +22,8 @@ Metadata is data-driven: `products.nix` (identity, asset naming, runtime needs,
 never a hash) + `pins.lock.json` (generated version/tag/url/sha256 per system,
 rewritten by `nix run .#update` with **zero Nix builds**).
 
-`PLAN.md` is the working design doc: what was measured, the phases (P0 done, P1
-next) and the open decisions.
+`PLAN.md` is the working design doc: what was measured, the phases (P0 and P1
+done, P2 next) and the open decisions.
 
 ## Craft apps: try it
 
@@ -31,17 +31,27 @@ next) and the open decisions.
 nix run .#photocraft                  # window opens (Wayland or XWayland)
 nix build .#photocraft                # result/bin/photocraft + result/bin/photocraft-cli
 result/bin/photocraft-cli --version   # headless CLI: convert|info|run|batch|droplet|commands|mcp
-nix build .#craft-suite               # every pinned app in one profile-less symlink join
+nix build .#craft-suite               # all twelve pinned apps in one symlink join (~3 GB)
 nix run .#update -- --dry-run         # what would bump, no writes, no builds
-nix flake check                       # eval test for all systems + headless CLI smoke
+nix flake check                       # per-arch eval test + <app>-cli --version smoke tests
 ```
 
-Only `photocraft` is pinned so far (phase P0). To adopt another product:
+All twelve apps are pinned and build: cadcraft, deckcraft, designcraft,
+effectcraft, filmcraft, gridcraft, lightcraft, pdfcraft, photocraft, soundcraft,
+vectorcraft, wordcraft (`craft-launcher` is metadata-only by decision, see
+below). Adopting one that is not pinned yet is the same command:
 
 ```bash
-nix run .#update -- lightcraft        # appends its pins; the package appears automatically
-nix build .#lightcraft
+nix run .#update -- <product>         # appends its pins; the package appears automatically
 ```
+
+`tests/wrapper-audit.sh` is how the per-product wrapper flags get decided: for
+every pinned product it prints the ELF `NEEDED` list, the sonames the binary
+dlopens, and whether it references ALSA/PipeWire/ffmpeg/xdg-open. Run it after a
+bump and re-read `products.nix` — that audit is what turned `needsAlsa` from a
+guess into "deckcraft, effectcraft, filmcraft, soundcraft have
+DT_NEEDED libasound.so.2, the rest do not" and removed `ffmpeg` everywhere (no
+product references it).
 
 ## Craft apps: install it
 
@@ -98,15 +108,18 @@ prints the tarballs the release did contain (upstream already renamed assets onc
 - `patchelf --set-interpreter` on each ELF (upstream hard-codes
   `/lib64/ld-linux-x86-64.so.2`, which on NixOS is nix-ld, not glibc).
 - `makeWrapper` around every binary:
-  - `LD_LIBRARY_PATH` = the sonames the app *dlopens* (and checks for itself at
-    startup: `libwayland-client.so.0`, `libxkbcommon.so.0`,
+  - `LD_LIBRARY_PATH` = the sonames the app *dlopens* (photocraft checks them
+    itself at startup: `libwayland-client.so.0`, `libxkbcommon.so.0`,
     `libxkbcommon-x11.so.0`, `libvulkan.so.1`, `libEGL.so.1`, `libX11.so.6`,
     `libX11-xcb.so.1`, `libxcb.so.1`, `libXcursor.so.1`, `libXi.so.6`) plus
-    `libwayland-egl`, **libglvnd** dispatchers, `libdbus-1.so.3` (portal),
-    fontconfig, freetype, `/run/opengl-driver/lib` last so the system Vulkan
-    ICD/GLX vendor wins. Never nixpkgs `mesa` — same bug as ArtCraft, see
-    Troubleshooting.
-  - `PATH` = `xdg-open`, and `ffmpeg` for the products whose metadata says so.
+    `libwayland-egl`, **libglvnd** dispatchers (`libGL.so.1`/`libEGL.so.1` —
+    pdfcraft dlopens both), `libXrender`, `libdbus-1.so.3` (portal), fontconfig,
+    freetype, alsa-lib for the four products that link it, and
+    `/run/opengl-driver/lib` last so the system Vulkan ICD/GLX vendor wins.
+    Never nixpkgs `mesa` — same bug as ArtCraft, see Troubleshooting.
+  - `PATH` = `xdg-open`. The `needsFfmpeg` flag exists but is off everywhere: the
+    binary audit found no ffmpeg/ffprobe reference in any Craft app (they carry
+    their own codecs).
 - `dontStrip`, `dontPatchELF`, `hardeningDisable = [ "all" ]`: the interpreter is
   the only byte we change in a 90 MB upstream binary.
 - Asserts the product's glibc floor (2.35, 2.39 on riscv64) against nixpkgs'
@@ -323,14 +336,23 @@ layout stay stable across runs.
   artefacts, no cosign/Sigstore/attestation published). We record upstream's
   `SHA256SUMS.txt` line verbatim in `pins.lock.json` so a swap is visible in a
   diff.
-- **Only photocraft is runtime-verified.** Its wrapper, Wayland and XWayland
-  startup and CLI were exercised on this box (Navi 48, niri). The other products'
-  `needsAlsa`/`needsFfmpeg` metadata is a reading of upstream's dependency list,
-  not a test — phase P1 verifies each app, per product.
+- **Runtime verification.** photocraft (Wayland + XWayland), soundcraft (ALSA
+  device opens), filmcraft (VA-API/NVDEC absent → falls back to software decode)
+  and pdfcraft (wgpu on the Vulkan RADV adapter) were launched here; all twelve
+  pass the headless `<app>-cli --version` check and their upstream `.desktop`
+  files pass `desktop-file-validate` untouched. The remaining eight are
+  build-and-CLI verified, not GUI-verified — they are the same codebase family,
+  so a wrapper bug in one is likely a wrapper bug in all, and the audit flags are
+  per-product rather than shared.
 - **Portals.** Without `xdg.portal.enable = true` (plus a portal implementation)
-  Open/Save dialogs and the colour picker fail: the binary embeds an rfd
+  Open/Save dialogs and the colour picker fail: every product embeds an rfd
   `xdg-desktop-portal` client and needs `libdbus-1.so.3` (the wrapper provides
   it) and a running portal.
+- **Hardware video decode (filmcraft).** It dlopens `libva.so.2`/`libva-drm.so.2`
+  (and `libnvcuvid.so.1`/`libnvidia-encode.so.1`). Those must come from your
+  system, not the store — put `libva` and the VA-API driver in
+  `hardware.graphics.extraPackages` so they appear in `/run/opengl-driver/lib`.
+  Without them FilmCraft logs "no VA-API hardware decoding" and works.
 - **Theme detection** shells out to `/usr/bin/gsettings`, which does not exist on
   NixOS; the app reads `org.freedesktop.portal.Settings` first. Dark/light
   behaviour without either is a P2 item.
