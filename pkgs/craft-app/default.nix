@@ -17,6 +17,7 @@
 
 {
   lib,
+  pkgs,
   stdenv,
   fetchurl,
   patchelf,
@@ -124,6 +125,16 @@ stdenv.mkDerivation (finalAttrs: {
   pname = product.repo;
   inherit (pin) version;
 
+  # `out` is the runnable thing (bin + upstream licences/README), `desktop` is
+  # the menu integration (application entry, hicolor icons, mime types,
+  # AppStream). Split because `programs.<app>.enableDesktopEntry` has to be able
+  # to install the binary *without* putting it in the application menu, which a
+  # single output could not express.
+  outputs = [
+    "out"
+    "desktop"
+  ];
+
   src = fetchurl {
     url = asset.url;
     hash = asset.sha256;
@@ -157,10 +168,20 @@ stdenv.mkDerivation (finalAttrs: {
     cp --no-preserve=ownership bin/* "$out/bin/"
     chmod +x "$out/bin"/*
 
-    # Desktop entry, hicolor icons + scalable svg, AppStream metainfo, mime
-    # types and the licence/OFL/README set all ship ready-made upstream, with
-    # the ai.storyteller.<app> id. We install them verbatim.
-    cp --no-preserve=ownership -r share "$out/"
+    # Upstream ships the licence/OFL/README set next to the binaries: that belongs
+    # with the package, so it stays in the out output.
+    mkdir -p "$out/share"
+    cp --no-preserve=ownership -r share/doc "$out/share/"
+
+    # Desktop entry, hicolor icons + scalable svg, AppStream metainfo and mime
+    # types ship ready-made, with the ai.storyteller.<app> id. Verbatim, in the
+    # desktop output.
+    mkdir -p "$desktop/share"
+    for d in applications icons metainfo mime; do
+      if [ -d "share/$d" ]; then
+        cp --no-preserve=ownership -r "share/$d" "$desktop/share/"
+      fi
+    done
 
     runHook postInstall
   '';
@@ -197,8 +218,17 @@ stdenv.mkDerivation (finalAttrs: {
       ;
     upstreamChecksums = asset.sumsLine;
     inherit (pin) tag releaseDate;
+    # The platform refusal, as data: modules turn this into an assertion message
+    # instead of a bare "package is marked broken".
+    unsupportedReason = unsupported;
     # Every file the package exposes as a command, for tests and modules.
     allPrograms = bins;
+    # Upstream desktop assets, validated (not authored) by passthru.tests.
+    desktopAssets = true;
+    tests = pkgs.callPackage ./tests.nix {
+      inherit product pins;
+      package = finalAttrs.finalPackage;
+    };
   };
 
   meta = {
