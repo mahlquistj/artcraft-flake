@@ -3,18 +3,19 @@
 # that home-manager generates from `programs.artcraft`.
 #
 #   nix eval --impure -f tests/hm-module.nix options          # merged option values
-#   nix build --impure --no-link -f tests/hm-module.nix hmEntry \
-#     && cat $(result)/share/applications/artcraft.desktop    # generated file
+#   OUT=$(nix build --impure --no-link --print-out-paths -f tests/hm-module.nix hmEntry)
+#   cat "$OUT/share/applications/artcraft.desktop"            # generated file
 #
-# Override the inputs if the defaults are stale:
-#   nix eval --impure -f tests/hm-module.nix options --argstr homeManager "<flake ref>"
+#   nix eval --impure -f tests/hm-module.nix options --arg homeManager '"github:nix-community/home-manager?ref=release-25.11"'
 {
-  artcraftFlake ? "path:/home/maj/projects/artcraft-flake",
-  homeManager ? "path:/nix/store/ajsk5n30javg5iz3x0ygl7n07cw1z5cl-source",
+  artcraftFlake ? "path:${toString ./..}",
+  homeManager ? "github:nix-community/home-manager",
 }:
 let
   ac = builtins.getFlake artcraftFlake;
   hm = builtins.getFlake homeManager;
+  # HM's own nixpkgs input, so the harness is self-contained (it must not depend
+  # on which nixpkgs the caller happens to have in scope).
   pkgs = import hm.inputs.nixpkgs {
     system = "x86_64-linux";
     overlays = [ ac.overlays.default ];
