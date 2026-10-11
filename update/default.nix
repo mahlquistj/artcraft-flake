@@ -40,6 +40,7 @@ writeShellApplication {
         "  nix run .#update -- photocraft lightcraft  # explicit products" \
         "  nix run .#update -- --all                 # every packageable product" \
         "  nix run .#update -- --dry-run             # show the diff, write nothing" \
+        "  nix run .#update -- --fail-on-change       # exit 1 if any pin would move" \
         "  nix run .#update -- --verify photocraft   # nix build afterwards"
     }
 
@@ -52,12 +53,14 @@ writeShellApplication {
     DRY_RUN=0
     VERIFY=0
     ALLOW_DOWNGRADE=0
+    FAIL_ON_CHANGE=0
     ALL=0
     TARGETS=()
 
     for arg in "$@"; do
       case "$arg" in
         --dry-run) DRY_RUN=1 ;;
+        --fail-on-change) FAIL_ON_CHANGE=1 ;;
         --verify) VERIFY=1 ;;
         --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
         --all) ALL=1 ;;
@@ -222,6 +225,10 @@ writeShellApplication {
       ) || true
       echo
       echo "dry run: nothing written"
+      if [[ "$FAIL_ON_CHANGE" == 1 && "$CHANGED" == 1 ]]; then
+        echo "pins would move: failing as requested (--fail-on-change)" >&2
+        exit 1
+      fi
       exit 0
     fi
 
