@@ -35,6 +35,7 @@
   libxi,
   libxrandr,
   libxext,
+  libxrender,
   libxkbcommon,
   # libdbus-1.so.3: the app talks to org.freedesktop.portal.{FileChooser,
   # Screenshot,Settings} through it, and rfd reports "Can't connect to a portal:
@@ -74,10 +75,14 @@ let
   # the headless CLI(s), which is how CI gets a display-free smoke test.
   bins = [ product.guiBin ] ++ product.cliBins;
 
-  # Libraries the product dlopens, i.e. never link-time dependencies. The ten
-  # sonames below are what the app's own startup preflight checks; everything
-  # after that is a dlopen we found in the binary but the preflight trusts
-  # implicitly (wayland-egl, dbus, fontconfig, freetype).
+  # Libraries the binaries need but do not carry: the X11/Wayland/GL set that
+  # photocraft's startup preflight names explicitly (libwayland-client.so.0,
+  # libxkbcommon.so.0, libxkbcommon-x11.so.0, libvulkan.so.1, libEGL.so.1,
+  # libX11.so.6, libX11-xcb.so.1, libxcb.so.1, libXcursor.so.1, libXi.so.6), the
+  # extra dlopens the audit in tests/wrapper-audit.sh found per product
+  # (libwayland-egl, libGL/libXrender for pdfcraft, libdbus-1.so.3 for the
+  # portal), and fontconfig/freetype. Products with DT_NEEDED libasound get
+  # alsa-lib through product.needsAlsa.
   runtimeLibs = [
     libglvnd
     vulkan-loader
@@ -88,6 +93,9 @@ let
     libxi
     libxrandr
     libxext
+    # pdfcraft dlopens libXrender.so.1 (and libGL.so.1 from libglvnd); it is the
+    # one product with no libvulkan string. Small enough to always ship.
+    libxrender
     libxkbcommon
     dbus
     fontconfig
@@ -207,6 +215,8 @@ stdenv.mkDerivation (finalAttrs: {
 
       File and colour dialogs go through xdg-desktop-portal, so a NixOS system
       installing this should set xdg.portal.enable = true.
+
+      ${product.notes}
     '';
     mainProgram = product.guiBin;
     homepage = "https://github.com/${product.owner}/${product.repo}";
