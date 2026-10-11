@@ -1,7 +1,14 @@
-# PLAN §6: "apps we package get stale silently" is a risk, so freshness is a
-# scheduled job rather than a habit. The update itself needs no Nix build — it is
-# one GitHub API call plus one SHA256SUMS.txt download per product — so this is
-# cheap enough to run weekly and to open a PR only when a pin actually moved.
+# PLAN §6: "apps we package get stale silently" is the risk, so freshness is a
+# scheduled job: bump the pins -> open a PR -> let auto-merge land it once CI is
+# green. The update itself needs no Nix build (one release lookup plus one
+# SHA256SUMS.txt per product), which is what makes an unattended weekly bump
+# reasonable at all.
+#
+# Requires, in the repo:
+#   Settings > General > Allow auto-merge                (+ squash merge allowed)
+#   Settings > Secrets > Actions > CRAFT_BUMP_TOKEN      (see the step below)
+#   Settings > Branches > protection for main: require the "flake check" job,
+#     otherwise auto-merge has nothing to wait for and can land a red bump.
 name: release pins freshness
 
 on:
@@ -14,13 +21,49 @@ permissions:
   contents: write
   pull-requests: write
 
+# Two runs must not race the same branch.
+concurrency:
+  group: craft-update-pins
+  cancel-in-progress: false
+
 jobs:
-  update:
+  bump:
+    name: bump and open a PR
     runs-on: ubuntu-24.04
+    env:
+      # Fixed branch on purpose: when upstream ships again while a bump PR is
+      # still red, this run force-pushes onto it and comments, so there is one
+      # current PR instead of a pile of competing ones.
+      BRANCH: craft/update-pins
+      BASE: main
+
     steps:
-      # Pinned to full commit SHAs on purpose: a moving tag or a mistyped one
-      # (this used to say `@V31`, which GitHub cannot resolve) breaks CI silently
-      # until someone pushes. Refresh with
+      # A PR opened with the default GITHUB_TOKEN only gets CI in an
+      # "approval required" state (docs: trigger-a-workflow), so auto-merge would
+      # wait for a human click forever. Opening the PR with a personal token makes
+      # it a normal pull_request run. Create a fine-grained PAT that is limited to
+      # this repository with Contents: write + Pull requests: write, and store it
+      # as the repository (not personal) secret CRAFT_BUMP_TOKEN.
+      - name: Require the bump token
+        env:
+          BUMP_TOKEN: '${{ secrets.CRAFT_BUMP_TOKEN }}'
+        run: |
+          set -euo pipefail
+          if [ -z "${BUMP_TOKEN:-}" ]; then
+            echo "::error::Repository secret CRAFT_BUMP_TOKEN is not set, and without it" \
+                 "the bump PR cannot get CI that gates auto-merge." \
+                 "Create a fine-grained PAT (this repo only, Contents: write," \
+                 "Pull requests: write) and add it as a repository secret."
+            exit 1
+          fi
+          # gh reads GH_TOKEN; git keeps using the checkout credential, so the
+          # push stays the bot's and only the PR is authored by the token owner.
+          echo "GH_TOKEN=$BUMP_TOKEN" >> "$GITHUB_ENV"
+          echo "PR identity: CRAFT_BUMP_TOKEN (fine-grained PAT)" >> "$GITHUB_STEP_SUMMARY"
+
+      # Pinned to full commit shas: `@v4`/`@V31`-style refs are exactly what broke
+      # the first run (GitHub cannot resolve a tag that does not exist). Resolve a
+      # new SHA with
       #   curl -s https://api.github.com/repos/<owner>/<repo>/git/ref/tags/<tag> | jq -r .object.sha
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,27 +74,107 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      # --all so a product that is packageable but somehow unpinned also shows up.
-      # --dry-run --fail-on-change: report the diff, exit non-zero if it is not empty.
-      - name: check for new upstream releases
-        run: nix run .#update -- --all --dry-run --fail-on-change
+      - name: Update pins
+        run: nix run .#update -- --all | tee /tmp/update.log
 
-      # If we got here nothing moved, unless the previous step was run without the
-      # fail flag. Bump on a separate manual dispatch when a PR is wanted.
-      - name: open a bump PR
-        if: github.event_name == 'workflow_dispatch'
+      - name: Did anything move?
+        id: diff
         run: |
           set -euo pipefail
-          nix run .#update -- --all
           if git diff --quiet -- pins.lock.json; then
-            echo "pins.lock.json unchanged; nothing to open"
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo "No new releases: pins.lock.json is unchanged, nothing to open." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          git config user.name github-actions
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          branch="craft/update-pins-$(date -u +%Y%m%d)"
-          git checkout -b "$branch"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          # The update script reports one line per product; carry those into the
+          # PR body so the diff is legible without reading JSON.
+          grep -E '^(\+|~|=) ' /tmp/update.log > /tmp/changes.txt || true
+          sed 's/^/   /' /tmp/changes.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit and push the bump
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$BRANCH" 2>/dev/null || git switch "$BRANCH"
           git add pins.lock.json
-          git commit -m "craft: update release pins"
-          git push -u origin "$branch"
-          echo "opened branch $branch; create the PR from the repository page"
+          git commit -m "craft: update release pins
+
+          Generated by .github/workflows/update-pins.yml (nix run .#update -- --all).
+          Hashes come from each release's SHA256SUMS.txt; product metadata, which
+          this job never touches, lives in products.nix."
+          # The branch may already exist from last week's unmerged attempt.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git fetch --no-tags origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            git push --force-with-lease=refs/heads/$BRANCH origin "HEAD:refs/heads/$BRANCH"
+          else
+            git push -u origin "HEAD:refs/heads/$BRANCH"
+          fi
+
+      - name: Open the PR, or update the one already open
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "## New upstream releases"
+            echo
+            echo '```'
+            cat /tmp/changes.txt
+            echo '```'
+            echo
+            echo "Generated by the scheduled \`nix run .#update -- --all\` — no Nix build"
+            echo "was needed: each hash is the release's own SHA256SUMS.txt line, converted"
+            echo "with \`nix hash convert\`. Only \`pins.lock.json\` changes; \`products.nix\`"
+            echo "(asset naming, wrapper flags) is untouched by this job."
+            echo
+            echo "### Before merging"
+            echo "- \`nix flake check\` (the **flake check** job) covers the eval test across"
+            echo "  x86_64/aarch64/riscv64, the twelve headless \`<app>-cli --version\` smoke"
+            echo "  tests, upstream's desktop/AppStream validation and the NixOS module contract."
+            echo "- AppStream in each tarball also carries a \`<release version>\`, and the"
+            echo "  metainfo check compares it against these pins, so a mislabelled asset"
+            echo "  fails here rather than shipping."
+          } > /tmp/body.md
+
+          pr="$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$pr" ]; then
+            echo "Reusing open PR #$pr for $BRANCH"
+            # Built in a file: a multi-line quoted argument here would put shell
+            # text at column 0, which ends a `run: |` block scalar.
+            {
+              echo "Pins moved again — this PR was force-pushed to the latest release set."
+              echo
+              echo '```'
+              cat /tmp/changes.txt
+              echo '```'
+            } > /tmp/comment.md
+            gh pr comment "$pr" --body-file /tmp/comment.md
+            gh pr edit "$pr" --body-file /tmp/body.md
+          else
+            pr="$(gh pr create --base "$BASE" --head "$BRANCH" \
+                  --title "craft: update release pins" --body-file /tmp/body.md)"
+            echo "Opened $pr"
+          fi
+
+      # Auto-merge is the whole point: GitHub lands it as soon as the required
+      # checks pass, and refuses if one is already red. Setting it is idempotent,
+      # so this also re-arms a PR whose auto-merge was disabled by an earlier push.
+      - name: Enable auto-merge (squash)
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          pr="$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number')"
+          if [ -z "$pr" ]; then
+            echo "::error::no open PR found on $BRANCH after the previous step — it must" \
+                 "have failed to create one. Not enabling auto-merge." >&2
+            exit 1
+          fi
+          gh pr merge "$pr" --auto --squash
+          {
+            echo "Auto-merge enabled on PR #$pr (squash). It merges when the"
+            echo "**flake check** job goes green; if a required check is already failing,"
+            echo "this command exits non-zero and the run shows red instead of pretending."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,6 @@
 # PLAN: packaging the whole Craft App suite
 
-Status: **P0 + P1 + P2 done on 2026-10-11** — see §8 (what P0 shipped, and where it
+Status: **P0 + P1 + P2 done, auto-merging pin bumps shipped** on 2026-10-11 — see §8 (what P0 shipped, and where it
 differs from the sketch), §9 (the binary audit that corrected the wrapper
 metadata) and §10 (P2: generated modules, asset validation, CI). Everything under
 "Verified" was measured here (NixOS 26.11, x86_64-linux, niri/Wayland, AMD
@@ -430,7 +430,7 @@ fights Nix. Options: (a) package it and document that it must not install apps
 | Binary-only provenance | record upstream `SHA256SUMS` line verbatim in pins; keep `meta.sourceProvenance = binaryNativeCode` honest |
 | Store size: each app is ~80-145 MB unpacked, and there are 13 of them | document it; users pick products, and `craft-suite` is opt-in, not the default |
 | Wayland drag-and-drop missing in winit 0.30 (photocraft README) | document; `WAYLAND_DISPLAY= ` fallback already works (verified) |
-| Apps we package get stale silently | weekly scheduled CI job running `nix run .#update -- --dry-run` and opening a PR |
+| Apps we package get stale silently | scheduled `update-pins.yml`: `nix run .#update -- --all` -> PR -> auto-merge (squash) once the `flake check` job passes; `--fail-on-change` stays for a manual freshness-only check |
 | Upstream trademarks/brand clause (pdfcraft README) | keep upstream's `share/doc` licences + brand notes untouched; don't re-host icons ourselves |
 | Upstream's own lib preflight rejects the closure (see §1) | satisfy it via `LD_LIBRARY_PATH` (the wrapper does); `PHOTOCRAFT_SKIP_LIB_CHECK=1` exists as an escape hatch but treat needing it as a bug in our wrapper |
 | GitHub API rate limits while bumping 13 products | resolve tags/URLs from `releases.atom` + `releases/expanded_assets/<tag>` + the `<appId>.metainfo.xml` `<release date=…>` inside the tarball; the API is only a convenience |
@@ -569,7 +569,7 @@ each package's `meta.longDescription`) and `verified = { atVersion, runtime; }`,
 Next (P2): generated `modules/crafts.nix` (`programs.<app>.enable` per product,
 portal reminder), metainfo validation in `passthru.tests` — `appstream-glib` in
 this nixpkgs ships no CLI any more, use `pkgs.appstream` (`appstreamcli`) — and a
-weekly `nix run .#update -- --dry-run` CI job.
+weekly `nix run .#update -- --dry-run` CI job. **Done in the follow-up to P2: see §11.**
 
 ---
 
@@ -654,3 +654,48 @@ Next: **P3** — decide what to do about `craft-launcher` (investigate whether i
 has a read-only/discovery mode before packaging it), and **P4** — the optional
 extras (macOS `.dmg`, `withSource` variants). §5.5 (per-product version
 overrides) stays closed: latest-release-only was chosen.
+
+---
+
+## 11. Follow-up: unattended pin bumps (§6's stale-pin row, closed)
+
+Requested behaviour: Mondays 06:00 UTC → update pins → if anything moved, open a
+PR → auto-merge once the tests pass. Decisions taken first: **fail if the bump
+token is missing** (rather than degrade to a PR with no gating CI), **squash**
+(generated file, per-week history has no value), **one reused branch**
+(`craft/update-pins`) so a red week does not pile up competing PRs.
+
+Flow of `update-pins.yml`: require `CRAFT_BUMP_TOKEN` → `nix run .#update -- --all`
+→ `git diff --quiet -- pins.lock.json` (nothing moved → open nothing) → commit to
+the branch and push (force-with-lease if the branch exists) → `gh pr create`, or
+reuse the open PR with a comment carrying the fresh diff → `gh pr merge --auto
+--squash`.
+
+The GitHub-side facts that shaped it (all from current docs, checked rather than
+assumed):
+
+- A PR opened with `GITHUB_TOKEN` now yields `pull_request` runs in an
+  **approval-required** state — auto-merge would wait for a human click forever.
+  Hence the fine-grained PAT for *authoring only*; the push still uses the job's
+  own token, so the commit stays attributed to the bot.
+- Checks only satisfy required status checks when the run was triggered by
+  `push`/`pull_request`/`pull_request_target` — a `workflow_run` or
+  `workflow_dispatch` check does **not** gate a merge. So there is no value in a
+  "watcher" workflow; the gate has to be a real `pull_request` run of `ci.yml`.
+- `gh pr merge --auto` fails immediately when a required check is already red,
+  which is the loud behaviour we want, and is idempotent, so re-arming a PR whose
+  auto-merge was disabled by a later push is free.
+- Consequently `main` must require the check by **name**, so the `ci.yml` job is
+  named `flake check` and README lists the three settings (auto-merge + squash,
+  required check, repository secret). Without a required check, auto-merge has
+  nothing to wait for and could land a red bump.
+
+Local rehearsal (`/tmp/rehearse.sh`, throwaway): local bare remote + a `gh` stub
+emulating `--jq`. Run 1 (pins move, no PR) → plain push, PR created, auto-merge
+armed; run 2 (pins move again, PR still open) → force-with-lease, PR reused,
+comment + body update, re-armed; run 3 (nothing moved) → `changed=false`, no
+commit, no PR. It found three things, none in the workflow: a `${{ … }}` written
+unquoted into YAML came out mangled, a multi-line quoted shell argument put text
+at column 0 and terminated the `run: |` block scalar, and my stub ignored
+`--jq`. The first two are exactly what `checks.<system>.workflows` now catches,
+and it did: it failed the build on the invalid YAML before I ever pushed.

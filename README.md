@@ -203,11 +203,43 @@ twelve `desktop-assets-<app>` validations of upstream's files,
 `nixos-crafts-module` (the generated module's install contract), the ArtCraft
 build and `nixfmt`.
 
-`.github/workflows/ci.yml` runs that on push/PR. `update-pins.yml` runs
-`nix run .#update -- --all --dry-run --fail-on-change` weekly, so upstream
-shipping a release without us noticing is a red check rather than a silently
-stale pin (PLAN §6). Dispatching it manually applies the bumps and pushes a
-branch instead, so a human still reviews the pins diff.
+`.github/workflows/ci.yml` runs that on push to `main` and on every pull request
+(the job is named **flake check**, and that name is what branch protection should
+require).
+
+`update-pins.yml` is the unattended bump path: Mondays 06:00 UTC it runs
+`nix run .#update -- --all`, and if any pin moved it commits `pins.lock.json` to
+the branch `craft/update-pins`, opens (or refreshes) a PR against `main`, and
+enables **auto-merge with squash** — so the bump lands on its own once
+`flake check` is green, and does not land if it is red. If nothing moved it
+commits nothing and opens nothing. A later week where a previous bump PR is still
+open force-pushes onto that same branch and comments the new diff, so there is one
+current PR rather than a pile of competing ones (PLAN §6: stale pins were the
+risk; silence was the failure mode).
+
+### Setup the bump workflow needs
+
+1. **Settings → General → Pull Requests**: allow squash merge and enable
+   **Allow auto-merge**.
+2. **Settings → Branches (or rulesets)**: protect `main` and require the status
+   check **flake check**. Without a required check there is nothing for auto-merge
+   to wait on, and a red bump could land immediately. Optionally require a review
+   too — then a bot bump still needs one human click.
+3. **Settings → Secrets and variables → Actions → repository secret**
+   `CRAFT_BUMP_TOKEN`: a **fine-grained personal access token** scoped to this
+   repository only, with *Contents: Read and write* and *Pull requests: Read and
+   write*.
+
+   Why a token at all: a PR opened with the default `GITHUB_TOKEN` gets its CI run
+   in an *approval-required* state, so auto-merge would wait forever for a human
+   click. Opening the PR as the PAT owner makes it a normal `pull_request` run.
+   The token is used **only** for `gh` (PR authoring); the branch is still pushed
+   with the job's own `GITHUB_TOKEN`, so the commit stays attributed to
+   `github-actions[bot]`. When the PAT expires the job fails loudly at the first
+   step with the reason, rather than quietly doing nothing.
+
+`workflow_dispatch` on that workflow does the same thing on demand, which is the
+way to test it once the secret exists.
 
 ## Layout
 

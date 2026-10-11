@@ -11,6 +11,10 @@ on:
 
 jobs:
   check:
+    # A stable job name matters: update-pins.yml enables auto-merge, which waits on
+    # the *required* status checks, and the required-check string is this job's
+    # name. Renaming it silently un-gates the auto-merge.
+    name: flake check
     runs-on: ubuntu-24.04
     steps:
       # Pinned to full commit SHAs: `@v4`/`@V31`-style refs are exactly what broke
