@@ -45,7 +45,8 @@ pkg/desktopItem.nix  makeDesktopItem menu entry (NixOS side)
 update.nix           `nix run .#update-pins` — re-resolves rev + hashes
 modules/nixos.nix    programs.artcraft (NixOS)
 modules/home-manager.nix  programs.artcraft (home-manager)
-tests/nixos-eval.nix eval-only smoke test for the NixOS module
+tests/nixos-eval.nix      eval-only smoke test for the NixOS module
+tests/hm-module.nix       eval-only smoke test for the home-manager module
 ```
 
 ## Try it
@@ -104,7 +105,26 @@ hundred MB.
 `programs.artcraft.enable` installs the package and a desktop entry. NixOS has no
 `xdg.desktopEntries` option, so the NixOS module adds a `makeDesktopItem`
 package to `environment.systemPackages`; the home-manager module uses
-`xdg.desktopEntries` (and enables `xdg.enable` for you).
+`xdg.desktopEntries`. The two APIs differ: `startupWMClass` is a
+`makeDesktopItem` keyword but *not* a home-manager option (home-manager errors
+with "The option … does not exist"), so on the home-manager side it is passed
+through `settings.StartupWMClass`, which home-manager forwards to
+`makeDesktopItem.extraConfig`.
+
+Both sides are covered by eval-only harnesses (they do not build the app):
+
+```bash
+# NixOS module: package lands in systemPackages, desktop item is generated
+nix eval --impure -f tests/nixos-eval.nix config.programs.artcraft.package.name
+
+# home-manager module: merged option values, then the generated .desktop file
+nix eval --impure -f tests/hm-module.nix options
+OUT=$(nix build --impure --no-link --print-out-paths -f tests/hm-module.nix hmEntry)
+cat "$OUT/share/applications/artcraft.desktop"
+```
+
+`tests/hm-module.nix` accepts `homeManager` and `artcraftFlake` arguments, so you
+can point it at your own pinned home-manager revision instead of the default.
 
 **Overlay**, if you just want `pkgs.artcraft`:
 
