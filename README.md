@@ -174,7 +174,7 @@ layout stay stable across runs.
   `wreq` and other crates this build never compiles) is a few hundred MB.
 - **Wayland decorations**: the app draws its own title bar
   (`with_decorations(false)`), so it behaves like a client-side-decorated window.
-  Verified under niri (Wayland) and through XWayland.
+  Verified under niri (Wayland) and through XWayland on an AMD Navi 48 (RX 9070) + Granite Ridge iGPU box, against the system mesa 25.0.7 driver.
 - **GPU driver comes from your config.** This flake ships the GL *dispatchers*
   only; the actual driver must exist on the system (`hardware.graphics` +
   `enableDrivers` on NixOS, or the distro's mesa/nvidia packages elsewhere).
@@ -186,20 +186,31 @@ layout stay stable across runs.
 **`ERROR eframe::native::run: Exiting because of error: Found no glutin configs
 matching the template: ... Error: not found`**
 
-The binary found no usable `libEGL.so.1`/`libGL.so.1` dispatcher, or the
-dispatcher and the vendor ICD disagree. Causes, in the order worth checking:
+glutin `dlopen`s `libEGL.so.1` / `libGL.so.1` at runtime. In nixpkgs those
+*dispatchers* only exist in `libglvnd` — `mesa` ships just the vendor libs
+(`libEGL_mesa.so.0`, `libGLX_mesa.so.0`) — so a package whose
+`LD_LIBRARY_PATH` has mesa but not libglvnd finds no GL implementation and dies
+exactly like this. Verified on this machine:
 
-1. A stale build of this flake (before the libglvnd fix) that put nixpkgs' `mesa`
-   on `LD_LIBRARY_PATH`. Rebuild/update the flake; the wrapper must contain
-   `libglvnd`, not `mesa`.
-2. No system OpenGL driver. The wrapper only supplies the dispatchers; the
-   vendor library must come from your system: on NixOS `hardware.graphics.enable
-   = true` (plus `services.xserver.videoDrivers = [ "nvidia" ];` for NVIDIA), so
-   that `/run/opengl-driver/lib` exists and
-   `/run/opengl-driver/share/glvnd/egl_vendor.d/*.json` points at it. On other
-   distros the system mesa/nvidia packages provide the same thing.
-3. Version skew between this flake's pinned nixpkgs and a much older/newer system
-   driver. Debug with `LIBGL_DEBUG=verbose EGL_LOG_LEVEL=debug artcraft`.
+| `LD_LIBRARY_PATH` | result |
+|---|---|
+| nixpkgs `mesa` + X11/Wayland libs (the original wrapper) | **NoGlutinConfigs** |
+| `libglvnd` + X11/Wayland libs | renders (Wayland and XWayland) |
+| `libglvnd` + `/run/opengl-driver/lib` | renders |
+
+The derivation now uses the libglvnd row, so if you still see this error:
+
+1. You are running a stale build — `nix build .#artcraft` and check
+   `grep libglvnd result/bin/artcraft-native`. Before the fix the wrapper listed
+   `...-mesa-.../lib` instead.
+2. No system OpenGL driver: the wrapper supplies dispatchers only. On NixOS that
+   means `hardware.graphics.enable = true` (plus
+   `services.xserver.videoDrivers = [ "nvidia" ];` on NVIDIA) so
+   `/run/opengl-driver/lib` and
+   `/run/opengl-driver/share/glvnd/egl_vendor.d/*.json` exist; elsewhere the
+   distro's mesa/nvidia packages play that role.
+3. Version skew between this flake's nixpkgs and the system driver — debug with
+   `LIBGL_DEBUG=verbose EGL_LOG_LEVEL=debug artcraft`.
 
 To separate driver problems from packaging problems, try software rendering (it
 still needs a working system mesa, but no kernel-mode GPU driver):
