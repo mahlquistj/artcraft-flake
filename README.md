@@ -33,7 +33,9 @@ nix build .#photocraft                # result/bin/photocraft + result/bin/photo
 result/bin/photocraft-cli --version   # headless CLI: convert|info|run|batch|droplet|commands|mcp
 nix build .#craft-suite               # all twelve pinned apps in one symlink join (~3 GB)
 nix run .#update -- --dry-run         # what would bump, no writes, no builds
-nix flake check                       # per-arch eval test + <app>-cli --version smoke tests
+nix flake check                       # eval test per arch, <app>-cli smoke tests,
+                                      # desktop/metainfo validation, NixOS module check
+nix build .#checks.x86_64-linux.nixos-crafts-module   # the module contract alone
 ```
 
 All twelve apps are pinned and build: cadcraft, deckcraft, designcraft,
@@ -55,30 +57,54 @@ product references it).
 
 ## Craft apps: install it
 
-The overlay publishes every pinned product as `pkgs.<name>`, so a NixOS or
-home-manager config only needs the overlay plus the packages you want:
+**Modules** (`nixosModules.crafts` / `homeModules.crafts`) are generated from
+`products.nix`, one option per product, plus a convenience list:
 
 ```nix
+# configuration.nix
 {
   inputs.craft.url = "github:YOU/artcraft-flake";   # or "git+file:///home/maj/projects/artcraft-flake"
 
-  nixpkgs.overlays = [ inputs.craft.overlays.default ];
+  imports = [ craft.nixosModules.default ];   # = artcraft + crafts
 
-  environment.systemPackages = [ pkgs.photocraft pkgs.lightcraft ];
+  programs.photocraft.enable = true;
+  programs.filmcraft.enable = true;
 
-  # File and colour dialogs go through xdg-desktop-portal (the app embeds an
-  # rfd portal client); without a portal implementation Open/Save fail.
-  xdg.portal.enable = true;
+  # or the whole set at once; the list is a mkDefault, so an explicit
+  # programs.<app>.enable = false still wins.
+  programs.crafts.enable = [ "lightcraft" "vectorcraft" "gridcraft" ];
+
+  # Menu integration comes from upstream's tarball and lives in the package's
+  # `desktop` output. Turn it off per app to keep the binary + CLI only:
+  programs.pdfcraft.enableDesktopEntry = false;
+
+  # Every Craft app does file open/save and the colour picker through
+  # xdg-desktop-portal; the module warns when this is off.
+  xdg.portal = { enable = true; extraPortals = [ pkgs.xdg-desktop-portal-gtk ]; };
 }
 ```
 
-Generated `programs.<app>.enable` modules are phase P2; until then use the
-overlay or `nix profile install path:.#photocraft`.
+The same `programs.<app>.{enable,package,enableDesktopEntry}` and
+`programs.crafts.enable` exist for home-manager via `homeModules.crafts`
+(`homeModules.default` merges both modules).
 
-Upstream ships the desktop entry (`ai.storyteller.photocraft.desktop`, validated
-with `desktop-file-validate`), the hicolor icon set + scalable SVG, mime types
-and AppStream metainfo inside the tarball, so this flake authors **none** of
-those — installing the package is what makes the menu entry appear.
+**Overlay only**, if you would rather not use a module:
+
+```nix
+nixpkgs.overlays = [ craft.overlays.default ];
+# Both outputs, because buildEnv links only the default output:
+environment.systemPackages = [ pkgs.photocraft pkgs.photocraft.desktop ];
+```
+
+**Ad-hoc, no config:** `nix profile install path:.#photocraft`.
+
+Upstream ships the desktop entry (`ai.storyteller.photocraft.desktop`), the
+hicolor icon set + scalable SVG, mime types and AppStream metainfo inside the
+tarball, so this flake authors **none** of those — they are validated, not
+written: `pkgs/craft-app/tests.nix` runs `desktop-file-validate` and
+`appstreamcli validate --no-net` over them and checks that the AppStream
+`<release version>` equals the version in `pins.lock.json`. Both families are
+flake checks (`checks.<system>.desktop-assets-<app>`).
 
 ## Craft apps: updating the pins
 
@@ -86,8 +112,9 @@ those — installing the package is what makes the menu entry appear.
 nix run .#update                       # every product already in pins.lock.json
 nix run .#update -- photocraft filmcraft
 nix run .#update -- --all              # every packageable product in products.nix
-nix run .#update -- --dry-run          # print the pins diff only
-nix run .#update -- --verify photocraft # then nix build .#photocraft
+nix run .#update -- --dry-run           # print the pins diff only
+nix run .#update -- --fail-on-change     # exit 1 if any pin would move (CI gate)
+nix run .#update -- --verify photocraft   # then nix build .#photocraft
 ```
 
 It resolves the latest tag (GitHub API, `releases.atom` fallback), downloads that
@@ -104,7 +131,12 @@ prints the tarballs the release did contain (upstream already renamed assets onc
 `pkgs/craft-app/default.nix` is the single generic builder:
 
 - `fetchurl` the pinned tarball (SRI hash from upstream's `SHA256SUMS.txt`).
-- Copy `bin/` and `share/` verbatim: no authored `.desktop`, no re-hosted icons.
+- Copy `bin/` and `share/` verbatim into **two outputs**: `out` = `bin/*` plus
+  `share/doc` (licences, OFL files, README), `desktop` = `share/{applications,
+  icons, metainfo, mime}`. The split is what makes `enableDesktopEntry = false`
+  mean something: both the NixOS system profile and home-manager's user
+  environment link only the default output, so the modules install `desktop` as
+  its own entry when it is wanted.
 - `patchelf --set-interpreter` on each ELF (upstream hard-codes
   `/lib64/ld-linux-x86-64.so.2`, which on NixOS is nix-ld, not glibc).
 - `makeWrapper` around every binary:
@@ -163,6 +195,20 @@ Want the Tauri app instead? See "Packaging the Tauri app" below.
 `artcraft-native` does not exist in any release tag (checked: `artcraft-v0.41.0`,
 the newest at the time of writing), so `pins.nix` pins a commit on `main`.
 
+## Checks and CI
+
+`nix flake check` runs exactly what CI runs: `prebuilt-eval` (products vs pins
+vs builder, across all three arches), twelve `smoke-<app>` headless loader tests,
+twelve `desktop-assets-<app>` validations of upstream's files,
+`nixos-crafts-module` (the generated module's install contract), the ArtCraft
+build and `nixfmt`.
+
+`.github/workflows/ci.yml` runs that on push/PR. `update-pins.yml` runs
+`nix run .#update -- --all --dry-run --fail-on-change` weekly, so upstream
+shipping a release without us noticing is a red check rather than a silently
+stale pin (PLAN §6). Dispatching it manually applies the bumps and pushes a
+branch instead, so a human still reviews the pins diff.
+
 ## Layout
 
 ```
@@ -170,6 +216,7 @@ flake.nix                 outputs generated from products.nix + pins.lock.json
 products.nix              per-product metadata (no hashes): ids, assets, runtime needs
 pins.lock.json            GENERATED by `nix run .#update`: tag/date/url/sha256 per system
 pkgs/craft-app/           generic prebuilt builder (fetchurl → patchelf → makeWrapper)
+pkgs/craft-app/tests.nix  validation of upstream's .desktop + AppStream (passthru.tests)
 pkgs/craft-suite.nix      products × pins × system → the package attributes
 pkgs/artcraft.nix         rustPlatform.buildRustPackage derivation (source build)
 pkgs/desktopItem.nix      makeDesktopItem menu entry (NixOS side, ArtCraft only)
@@ -177,9 +224,15 @@ update/default.nix        `nix run .#update`       — Craft release pins (no bu
 update/artcraft-pins.nix  `nix run .#update-pins`  — ArtCraft source pins (hash-mismatch builds)
 modules/nixos.nix         programs.artcraft (NixOS)
 modules/home-manager.nix  programs.artcraft (home-manager)
+modules/craft-options.nix shared option declarations for the generated Craft modules
+modules/crafts.nix        programs.<app>.enable + programs.crafts.enable (NixOS)
+modules/crafts-home-manager.nix   the same API for home-manager
 tests/prebuilt-eval.nix   eval-only consistency test: products vs pins vs builder, all arches
-tests/nixos-eval.nix      eval-only smoke test for the NixOS module
-tests/hm-module.nix       eval-only smoke test for the home-manager module
+tests/nixos-module-check.nix  flake check: the generated module installs out+desktop
+tests/nixos-eval.nix      eval-only harness for both NixOS modules
+tests/hm-module.nix       eval-only harness for both home-manager modules
+tests/wrapper-audit.sh    per-product readelf/strings audit behind the wrapper flags
+.github/workflows/        ci.yml (flake check), update-pins.yml (weekly freshness)
 ```
 
 ## Try ArtCraft
@@ -198,7 +251,7 @@ The build takes about a minute once the crates are vendored; the first fetch
 downloads the whole workspace lockfile (Tauri and friends included), a few
 hundred MB.
 
-## Install it
+## Install ArtCraft
 
 **NixOS module** (`programs.artcraft.enable`):
 
@@ -214,7 +267,7 @@ hundred MB.
       system = "x86_64-linux";
       modules = [
         ./configuration.nix
-        artcraft.nixosModules.artcraft
+        artcraft.nixosModules.default     # = artcraft + crafts (a module list)
         { programs.artcraft.enable = true; }
       ];
     };
@@ -226,7 +279,7 @@ hundred MB.
 
 ```nix
 {
-  imports = [ artcraft.homeModules.artcraft ];
+  imports = [ artcraft.homeModules.default ];   # = artcraft + crafts
   programs.artcraft = {
     enable = true;
     desktopEntry = true;         # app-menu entry, default true
@@ -272,7 +325,7 @@ environment.systemPackages = [ pkgs.artcraft ];
 nix profile install path:.#artcraft
 ```
 
-## Updating the pins
+## Updating ArtCraft's source pins
 
 ```bash
 nix run .#update-pins                                     # HEAD of pins.branch
@@ -289,7 +342,7 @@ succeeds — so a rev that fails to compile is reported rather than silently
 pinned. `pins.nix` is regenerated from shell variables, so its comments and
 layout stay stable across runs.
 
-## What the derivation does
+## What the ArtCraft derivation does
 
 - `cargoBuildFlags = [ "--package" "artcraft_native" ]` — the workspace's
   `default-members` is the Tauri app, so the package must be selected explicitly.

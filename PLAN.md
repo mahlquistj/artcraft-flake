@@ -1,9 +1,10 @@
 # PLAN: packaging the whole Craft App suite
 
-Status: **P0 + P1 done on 2026-10-11** — see §8 (what P0 shipped, and where it
-differs from the sketch) and §9 (the binary audit that corrected the wrapper
-metadata). Everything under "Verified" was measured on this machine (NixOS 26.11,
-x86_64-linux, niri/Wayland, AMD Navi 48) on 2026-10-11.
+Status: **P0 + P1 + P2 done on 2026-10-11** — see §8 (what P0 shipped, and where it
+differs from the sketch), §9 (the binary audit that corrected the wrapper
+metadata) and §10 (P2: generated modules, asset validation, CI). Everything under
+"Verified" was measured here (NixOS 26.11, x86_64-linux, niri/Wayland, AMD
+Navi 48) on 2026-10-11.
 
 Goal: one flake that installs any app in storytold's "Craft" suite, with the same
 pin/update discipline we already use for ArtCraft.
@@ -569,3 +570,74 @@ Next (P2): generated `modules/crafts.nix` (`programs.<app>.enable` per product,
 portal reminder), metainfo validation in `passthru.tests` — `appstream-glib` in
 this nixpkgs ships no CLI any more, use `pkgs.appstream` (`appstreamcli`) — and a
 weekly `nix run .#update -- --dry-run` CI job.
+
+---
+
+## 10. P2 outcome (2026-10-11): modules, validated assets, CI
+
+Decisions taken first: **two outputs** so `enableDesktopEntry` can actually gate
+the menu entry, **`mkWarnings`** for the portal dependency (§5.4 — warn, never
+mutate a service the user did not ask for), and **both GitHub Actions
+workflows**.
+
+Shipped: `pkgs/craft-app/tests.nix`, `modules/craft-options.nix`,
+`modules/crafts.nix`, `modules/crafts-home-manager.nix`,
+`tests/nixos-module-check.nix`, rewritten `tests/{nixos-eval,hm-module}.nix`,
+`checks.<system>.{desktop-assets-<app>,nixos-crafts-module}`,
+`update --fail-on-change`, `.github/workflows/{ci,update-pins}.yml`, and
+`nixosModules.{crafts,default}` / `homeModules.{crafts,default}`.
+
+API (both systems, one declaration source):
+
+```nix
+programs.<app> = { enable; package; enableDesktopEntry; };   # per product
+programs.crafts.enable = [ "photocraft" "filmcraft" ];       # list sugar
+```
+
+The list is a `mkDefault`, so an explicit `programs.cadcraft.enable = false`
+still wins — and both eval harnesses assert exactly that (cadcraft absent,
+photocraft's `desktop` output absent, the other ten with theirs: 21 store paths
+in a home environment, 22 + ArtCraft in a system environment).
+
+Things P2 measured or forced, that the sketch did not anticipate:
+
+- **Option keys must not depend on `pkgs`.** Deriving the *names* of
+  `programs.<app>` from the system's pin table (via `pkgs.stdenv`) means forcing
+  `_module.args.pkgs` — a **config** value — while building the option namespace:
+  `nixosSystem` then recurses ("querying `_module.args` instead, requiring
+  `config`"). Defaults may use `pkgs` because those thunks are forced at merge
+  time, so `names` now comes from products.nix + pins.lock.json alone, and a
+  product pinned only for other systems fails later with the builder's own
+  "no `<system>` asset" message.
+- **`lib.mkMerge [ … [ … ] ]` does not work** ("cannot append list"), and
+  `nixosModules.artcraft` is a module *function*, not an `{options,config}`
+  attrset, so it cannot be combined by attribute either. Shipped form:
+  `nixosModules.default = [ self.nixosModules.artcraft self.nixosModules.crafts ]`
+  — a module list is itself a valid module, because `imports` is flattened.
+- **A config attrset built from another config value recurses.**
+  `programs = genAttrs config.programs.crafts.enable (…)` deadlocks the definition
+  push-down; the working form is static keys from the product list with
+  `mkIf (elem name …)` inside.
+- **Upstream assets validate, with one caveat each.** `desktop-file-validate`:
+  12/12 clean (cadcraft and effectcraft emit non-fatal *hints* about
+  `Categories`). `appstreamcli validate`: 8/12 "fail" with exactly one warning —
+  `URL was not found on the server`, a **live network fetch** — so the test uses
+  `--no-net`, after which 12/12 pass. Which is also why the validation belongs in
+  a derivation, not in a manual checklist.
+- **`pkgs.appstream-glib` no longer ships a CLI** in this nixpkgs (outputs are
+  `out/dev/man/installedTests`); `pkgs.appstream` provides `appstreamcli`.
+- **The metainfo file is a second, independent version oracle.** Its
+  `<release version=… date=…>` matched `pins.lock.json` for all twelve products,
+  so the test compares them: a tag/asset mismatch now fails a build instead of
+  shipping silently mislabelled AppStream.
+- **NixOS's `system.stateVersion`/`nixpkgs.pkgs` shape matters for the check**:
+  `checks.nixos-crafts-module` evaluates a real `nixosSystem` with
+  `nixpkgs.pkgs = pkgs` (not `specialArgs.pkgs`, which silently disables
+  `nixpkgs.overlays`), then asserts the installed set is exactly out+desktop per
+  product before linking those paths — so it also *builds* what the module
+  installs.
+
+Next: **P3** — decide what to do about `craft-launcher` (investigate whether it
+has a read-only/discovery mode before packaging it), and **P4** — the optional
+extras (macOS `.dmg`, `withSource` variants). §5.5 (per-product version
+overrides) stays closed: latest-release-only was chosen.
