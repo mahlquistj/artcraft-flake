@@ -22,8 +22,8 @@
       nixFiles = nixpkgs.lib.fileset.unions [
         ./flake.nix
         ./pins.nix
-        ./update.nix
-        ./pkg
+        ./update/artcraft-pins.nix
+        ./pkgs
         ./modules
         ./tests
       ];
@@ -31,7 +31,7 @@
     {
       # Adds `artcraft` to any package set, for installing through an overlay
       # (home-manager, NixOS `nixpkgs.overlays`, dev shells, ...).
-      overlays.default = final: prev: { artcraft = final.callPackage ./pkg/artcraft.nix { }; };
+      overlays.default = final: prev: { artcraft = final.callPackage ./pkgs/artcraft.nix { }; };
 
       # NixOS: `programs.artcraft.enable = true;`
       nixosModules.artcraft = import ./modules/nixos.nix;
@@ -52,7 +52,7 @@
 
           # Rewrites pins.nix (rev, date, version, srcHash, cargoHash) and
           # verifies the build. Usage: nix run .#update-pins
-          update-pins = pkgs.callPackage ./update.nix { };
+          update-pins = pkgs.callPackage ./update/artcraft-pins.nix { };
         }
       );
 
@@ -107,7 +107,7 @@
         in
         {
           package = pkgs.artcraft;
-          desktopItem = pkgs.callPackage ./pkg/desktopItem.nix { package = pkgs.artcraft; };
+          desktopItem = pkgs.callPackage ./pkgs/desktopItem.nix { package = pkgs.artcraft; };
           nixfmt = pkgs.runCommand "artcraft-flake-nixfmt" {
             nativeBuildInputs = [ pkgs.nixfmt ];
             src = pkgs.lib.fileset.toSource {

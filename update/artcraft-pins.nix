@@ -9,7 +9,7 @@
   gnused,
 }:
 let
-  pins = import ./pins.nix;
+  pins = import ../pins.nix;
 in
 writeShellApplication {
   name = "artcraft-update-pins";
@@ -48,14 +48,17 @@ writeShellApplication {
     # Flakes must work even when the user has them disabled globally.
     export NIX_CONFIG="experimental-features = nix-command flakes"
 
-    cd "''${1:-$PWD}"
+    # Build from the flake checkout that holds pins.nix, wherever the script was
+    # invoked from (the craft pins updater lives in update/, artcraft's too).
+    ROOT="''${1:-$PWD}"
+    cd "$ROOT"
     if [[ ! -f pins.nix || ! -f flake.nix ]]; then
       echo "error: run this inside the artcraft-flake checkout (need pins.nix + flake.nix)" >&2
       exit 1
     fi
 
     # Values we cannot always recompute: keep whatever is pinned now.
-    PINS_JSON="$(nix eval --impure --raw --expr 'builtins.toJSON (import ./pins.nix)')"
+    PINS_JSON="$(cd "$ROOT" && nix eval --impure --raw --expr 'builtins.toJSON (import ./pins.nix)')"
     BRANCH="$(jq -r '.branch' <<< "$PINS_JSON")"
     VERSION="$(jq -r '.version' <<< "$PINS_JSON")"
     CARGO_HASH="$(jq -r '.cargoHash' <<< "$PINS_JSON")"

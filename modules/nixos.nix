@@ -7,7 +7,7 @@
 let
   cfg = config.programs.artcraft;
   # Works with or without the flake's overlay applied to the package set.
-  defaultPackage = pkgs.artcraft or (pkgs.callPackage ../pkg/artcraft.nix { });
+  defaultPackage = pkgs.artcraft or (pkgs.callPackage ../pkgs/artcraft.nix { });
 in
 {
   options.programs.artcraft = {
@@ -34,7 +34,7 @@ in
       cfg.package
     ]
     ++ lib.optionals cfg.desktopEntry [
-      (pkgs.callPackage ../pkg/desktopItem.nix { package = cfg.package; })
+      (pkgs.callPackage ../pkgs/desktopItem.nix { package = cfg.package; })
     ];
   };
 }
