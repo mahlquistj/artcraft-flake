@@ -14,7 +14,11 @@
   libxkbcommon,
   libxrandr,
   libxcb,
-  mesa,
+  # GL dispatchers (libGL.so.1 / libEGL.so.1). NOT mesa: in nixpkgs, mesa only
+  # ships the vendor ICD (libGLX_mesa.so.0 / libEGL_mesa.so.0), and putting a
+  # store mesa on the path next to the system's /run/opengl-driver ICD makes GL
+  # context creation fail with "Found no glutin configs matching the template".
+  libglvnd,
   wayland,
   # Runtime tools: in-app video playback shells out to ffmpeg/ffprobe, and the
   # `open` crate shells out to xdg-open.
@@ -27,13 +31,13 @@ let
   linuxLibs = [
     alsa-lib
     fontconfig
+    libglvnd
     libx11
     libxcursor
     libxi
     libxkbcommon
     libxrandr
     libxcb
-    mesa
     wayland
   ];
 in
@@ -98,11 +102,14 @@ rustPlatform.buildRustPackage {
   '';
 
   postFixup = ''
-    # Wrapper: dlopen'd libs (wayland/X11 via rust bindings) plus the ffmpeg and
-    # xdg-open executables the app shells out to.
+    # Wrapper for the libraries the Rust bindings dlopen instead of linking
+    # (Wayland, X11, the GL dispatchers) plus the ffmpeg and xdg-open
+    # executables the app shells out to. /run/opengl-driver/lib is the NixOS
+    # OpenGL driver directory; it is appended as a fallback for vendor libs that
+    # the glvnd json references by soname.
     mv "$out/bin/artcraft-native" "$out/bin/.artcraft-native-wrapped"
     makeWrapper "$out/bin/.artcraft-native-wrapped" "$out/bin/artcraft-native" \
-      --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath linuxLibs}" \
+      --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath linuxLibs}:/run/opengl-driver/lib" \
       --prefix PATH : "${
         lib.makeBinPath [
           ffmpeg

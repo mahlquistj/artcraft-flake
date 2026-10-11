@@ -141,7 +141,11 @@ layout stay stable across runs.
   `cargo test --package artcraft_native`.
 - `makeWrapper` around the binary:
   - `LD_LIBRARY_PATH` gets the libs that the Rust bindings `dlopen` instead of
-    linking (Wayland, X11, Mesa).
+    linking: **libglvnd** (the `libGL.so.1`/`libEGL.so.1` dispatchers), Wayland,
+    X11, xkbcommon, fontconfig, ALSA — plus `/run/opengl-driver/lib`, NixOS's
+    OpenGL driver directory. Mesa is deliberately **not** on the path: in nixpkgs
+    it only ships the vendor ICD, and a second mesa next to the system driver
+    breaks context creation (see Troubleshooting).
   - `PATH` gets `ffmpeg`/`ffprobe` (in-app video playback shells out to them) and
     `xdg-open` (the `open` crate).
 - `meta.mainProgram = "artcraft"`, so `nix run` and `lib.getExe` hit the wrapper.
@@ -169,12 +173,46 @@ layout stay stable across runs.
 - **First build is heavy.** Vendoring the workspace lockfile (Tauri, `sqlx`,
   `wreq` and other crates this build never compiles) is a few hundred MB.
 - **Wayland decorations**: the app draws its own title bar
-  (`with_decorations(false)`), so it behaves like a client-side-decorated window;
-  nothing extra is needed on NixOS, but you do need a GL driver (Mesa or your
-  GPU's package) available at runtime — the wrapper ships Mesa libs in
-  `LD_LIBRARY_PATH`, while hardware drivers come from your own config.
+  (`with_decorations(false)`), so it behaves like a client-side-decorated window.
+  Verified under niri (Wayland) and through XWayland.
+- **GPU driver comes from your config.** This flake ships the GL *dispatchers*
+  only; the actual driver must exist on the system (`hardware.graphics` +
+  `enableDrivers` on NixOS, or the distro's mesa/nvidia packages elsewhere).
 - The app is a network client: it does nothing useful without an ArtCraft
   account/API access.
+
+## Troubleshooting
+
+**`ERROR eframe::native::run: Exiting because of error: Found no glutin configs
+matching the template: ... Error: not found`**
+
+The binary found no usable `libEGL.so.1`/`libGL.so.1` dispatcher, or the
+dispatcher and the vendor ICD disagree. Causes, in the order worth checking:
+
+1. A stale build of this flake (before the libglvnd fix) that put nixpkgs' `mesa`
+   on `LD_LIBRARY_PATH`. Rebuild/update the flake; the wrapper must contain
+   `libglvnd`, not `mesa`.
+2. No system OpenGL driver. The wrapper only supplies the dispatchers; the
+   vendor library must come from your system: on NixOS `hardware.graphics.enable
+   = true` (plus `services.xserver.videoDrivers = [ "nvidia" ];` for NVIDIA), so
+   that `/run/opengl-driver/lib` exists and
+   `/run/opengl-driver/share/glvnd/egl_vendor.d/*.json` points at it. On other
+   distros the system mesa/nvidia packages provide the same thing.
+3. Version skew between this flake's pinned nixpkgs and a much older/newer system
+   driver. Debug with `LIBGL_DEBUG=verbose EGL_LOG_LEVEL=debug artcraft`.
+
+To separate driver problems from packaging problems, try software rendering (it
+still needs a working system mesa, but no kernel-mode GPU driver):
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe nix run .#artcraft
+```
+
+If your session looks fine but the app cannot connect to Wayland
+(`NoWaylandLib`), it did not find `libwayland-client.so.0`; the wrapper provides
+it, so that symptom means something stripped `LD_LIBRARY_PATH` (e.g. running the
+unwrapped `bin/.artcraft-native-wrapped` directly). Always start
+`bin/artcraft` (or `bin/artcraft-native`).
 
 ## Packaging the Tauri app instead
 
