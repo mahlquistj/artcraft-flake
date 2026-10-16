@@ -234,6 +234,26 @@ in
       };
     };
 
+  figcraft =
+    app "figcraft"
+      "FigCraft: an open-source, clean-room interface design and prototyping tool in pure Rust"
+      "Design and prototype user interfaces"
+    // {
+      notes = ''
+        Native interface design and prototyping (frames, auto layout, components,
+        prototyping, SVG/PNG export) rendered through wgpu on Vulkan. It is also a
+        collaboration client: it dials a `figcraft-server` for shared sessions and
+        a plugin registry and honours FIGCRAFT_CA_FILE for a custom CA bundle.
+        That server is a separate release asset, not part of the GUI tarball, and
+        is not packaged here. References xdg-open through the webbrowser crate; no
+        ALSA/PipeWire string (not a DT_NEEDED-libasound product).
+      '';
+      verified = {
+        atVersion = "0.6.0";
+        runtime = false;
+      };
+    };
+
   effectcraft =
     app "effectcraft"
       "EffectCraft: an open-source, clean-room motion graphics and effects tool in pure Rust"

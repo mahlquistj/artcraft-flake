@@ -9,7 +9,7 @@
 
 A Nix flake for storytold's **Craft app suite** on Linux: PhotoCraft, LightCraft,
 FilmCraft, SoundCraft, VectorCraft, PdfCraft, WordCraft, GridCraft, DeckCraft,
-CADCraft, DesignCraft, EffectCraft — plus **ArtCraft** itself.
+CADCraft, DesignCraft, EffectCraft, FigCraft — plus **ArtCraft** itself.
 
 Two packaging strategies live side by side, because the upstreams differ:
 
@@ -31,17 +31,17 @@ done, P2 next) and the open decisions.
 nix run .#photocraft                  # window opens (Wayland or XWayland)
 nix build .#photocraft                # result/bin/photocraft + result/bin/photocraft-cli
 result/bin/photocraft-cli --version   # headless CLI: convert|info|run|batch|droplet|commands|mcp
-nix build .#craft-suite               # all twelve pinned apps in one symlink join (~3 GB)
+nix build .#craft-suite               # all thirteen pinned apps in one symlink join (~3 GB)
 nix run .#update -- --dry-run         # what would bump, no writes, no builds
 nix flake check                       # eval test per arch, <app>-cli smoke tests,
                                       # desktop/metainfo validation, NixOS module check
 nix build .#checks.x86_64-linux.nixos-crafts-module   # the module contract alone
 ```
 
-All twelve apps are pinned and build: cadcraft, deckcraft, designcraft,
-effectcraft, filmcraft, gridcraft, lightcraft, pdfcraft, photocraft, soundcraft,
-vectorcraft, wordcraft (`craft-launcher` is metadata-only by decision, see
-below). Adopting one that is not pinned yet is the same command:
+All thirteen apps are pinned and build: cadcraft, deckcraft, designcraft,
+effectcraft, figcraft, filmcraft, gridcraft, lightcraft, pdfcraft, photocraft,
+soundcraft, vectorcraft, wordcraft (`craft-launcher` is metadata-only by
+decision, see below). Adopting one that is not pinned yet is the same command:
 
 ```bash
 nix run .#update -- <product>         # appends its pins; the package appears automatically
@@ -198,8 +198,8 @@ the newest at the time of writing), so `pins.nix` pins a commit on `main`.
 ## Checks and CI
 
 `nix flake check` runs exactly what CI runs: `prebuilt-eval` (products vs pins
-vs builder, across all three arches), twelve `smoke-<app>` headless loader tests,
-twelve `desktop-assets-<app>` validations of upstream's files,
+vs builder, across all three arches), thirteen `smoke-<app>` headless loader tests,
+thirteen `desktop-assets-<app>` validations of upstream's files,
 `nixos-crafts-module` (the generated module's install contract), the ArtCraft
 build and `nixfmt`.
 
@@ -413,8 +413,8 @@ layout stay stable across runs.
 **Craft apps (prebuilt):**
 
 - **Store size.** Each app's closure is ~375 MB (150 MB upstream ELFs plus the
-  `xdg-utils` chain: perl, file, shared-mime-info, glib). Thirteen products make
-  `.#craft-suite` gigabyte-scale, so it is opt-in and `nix build .` still
+  `xdg-utils` chain: perl, file, shared-mime-info, glib). Thirteen packaged apps
+  make `.#craft-suite` gigabyte-scale, so it is opt-in and `nix build .` still
   defaults to the ArtCraft source build.
 - **Provenance.** `sourceProvenance = binaryNativeCode`: no rebuild from source,
   hashes come from the same GitHub release as the binary (GitHub TLS, unsigned
@@ -423,9 +423,9 @@ layout stay stable across runs.
   diff.
 - **Runtime verification.** photocraft (Wayland + XWayland), soundcraft (ALSA
   device opens), filmcraft (VA-API/NVDEC absent → falls back to software decode)
-  and pdfcraft (wgpu on the Vulkan RADV adapter) were launched here; all twelve
+  and pdfcraft (wgpu on the Vulkan RADV adapter) were launched here; all thirteen
   pass the headless `<app>-cli --version` check and their upstream `.desktop`
-  files pass `desktop-file-validate` untouched. The remaining eight are
+  files pass `desktop-file-validate` untouched. The remaining nine are
   build-and-CLI verified, not GUI-verified — they are the same codebase family,
   so a wrapper bug in one is likely a wrapper bug in all, and the audit flags are
   per-product rather than shared.
