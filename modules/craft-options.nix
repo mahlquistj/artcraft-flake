@@ -52,7 +52,7 @@ let
 
       package = lib.mkOption {
         type = lib.types.package;
-        default = pkgs.${name} or (generatedFor system).${name};
+        default = (generatedFor system).${name};
         defaultText = lib.literalExpression "pkgs.${name}";
         description = "The ${name} derivation to use.";
       };
