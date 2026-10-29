@@ -28,6 +28,38 @@ let
     overlays = [ ac.overlays.default ];
   };
 
+  # Simulate a consumer whose nixpkgs already contains an unrelated
+  # package named soundcraft, without applying the ArtCraft overlay.
+  collisionPkgs = import hm.inputs.nixpkgs {
+    system = "x86_64-linux";
+
+    overlays = [
+      (_final: prev: {
+        soundcraft = prev.runCommand "soundcraft-collision" { } ''
+          mkdir -p $out
+        '';
+      })
+    ];
+  };
+
+  collisionEv = hm.lib.homeManagerConfiguration {
+    pkgs = collisionPkgs;
+
+    modules = [
+      ac.homeModules.crafts
+
+      {
+        home.username = "tester";
+        home.homeDirectory = "/home/tester";
+        home.stateVersion = "26.11";
+
+        programs.soundcraft.enable = true;
+      }
+    ];
+  };
+
+  collisionPackage = collisionEv.config.programs.soundcraft.package;
+
   craftNames = builtins.attrNames (
     lib.filterAttrs (_n: p: p.passthru.desktopAssets or false) ac.packages.x86_64-linux
   );
@@ -114,6 +146,16 @@ in
     portalWarn = lib.any (
       w: lib.hasInfix "xdg-desktop-portal" w && lib.hasInfix "The Craft apps" w
     ) ev.config.warnings;
+
+    soundcraftCollision = {
+      correctPackage = collisionPackage.passthru.desktopAssets or false;
+
+      desktopOutput = builtins.elem "desktop" collisionPackage.outputs;
+
+      desktopInstalled = lib.any (
+        p: p.outPath == collisionPackage.desktop.outPath
+      ) collisionEv.config.home.packages;
+    };
 
     # Home-manager evaluates these at activation; nothing else in this harness
     # would, so a bad assertion here is a broken user config in the field.
