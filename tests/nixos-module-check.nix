@@ -26,6 +26,35 @@ let
   names = builtins.attrNames craftPackages;
   system = pkgs.stdenv.hostPlatform.system;
 
+  # Reproduce a name collision in the consumer's package set.
+  collisionPkgs = pkgs.extend (
+    _final: prev: {
+      soundcraft = prev.runCommand "unrelated-soundcraft" { } ''
+        mkdir -p $out
+      '';
+    }
+  );
+
+  collisionSys = lib.nixosSystem {
+    inherit system;
+
+    modules = [
+      { nixpkgs.pkgs = collisionPkgs; }
+      { imports = [ module ]; }
+
+      {
+        programs.soundcraft.enable = true;
+        system.stateVersion = "26.11";
+      }
+    ];
+  };
+
+  collisionPackage = collisionSys.config.programs.soundcraft.package;
+
+  collisionDesktopInstalled = lib.any (
+    p: p.outPath == collisionPackage.desktop.outPath
+  ) collisionSys.config.environment.systemPackages;
+
   sys = lib.nixosSystem {
     inherit system;
     modules = [
@@ -101,6 +130,17 @@ let
         ''
           the Craft portal warning fired although xdg.portal.enable = true.
         ''
+    )
+    (lib.optionalString
+      (
+        !(collisionPackage.passthru.desktopAssets or false)
+        || !(builtins.elem "desktop" collisionPackage.outputs)
+        || !collisionDesktopInstalled
+      )
+      ''
+        SoundCraft package-name collision: the module selected an
+        unrelated pkgs.soundcraft or failed to install its desktop output.
+      ''
     )
   ];
 in
