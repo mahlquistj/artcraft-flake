@@ -274,38 +274,38 @@
     "version": "0.21.1"
   },
   "pdfcraft": {
-    "checksumsUrl": "https://github.com/storytold/pdfcraft/releases/download/v0.21.1/SHA256SUMS.txt",
-    "refreshedAt": "2026-11-16T14:31:10Z",
-    "releaseDate": "2026-11-12",
+    "checksumsUrl": "https://github.com/storytold/pdfcraft/releases/download/v0.22.0/SHA256SUMS.txt",
+    "refreshedAt": "2026-11-23T17:05:56Z",
+    "releaseDate": "2026-11-23",
     "repo": "pdfcraft",
     "systems": {
       "aarch64-linux": {
         "arch": "aarch64",
-        "name": "pdfcraft-0.21.1-linux-aarch64.tar.gz",
-        "sha256": "sha256-sI7+QWwdpFCwSz5OxfA4nXHXWA9DmPntoG0z0EcTx3A=",
-        "sha256Base16": "b08efe416c1da450b04b3e4ec5f0389d71d7580f4398f9eda06d33d04713c770",
-        "sumsLine": "b08efe416c1da450b04b3e4ec5f0389d71d7580f4398f9eda06d33d04713c770  pdfcraft-0.21.1-linux-aarch64.tar.gz",
-        "url": "https://github.com/storytold/pdfcraft/releases/download/v0.21.1/pdfcraft-0.21.1-linux-aarch64.tar.gz"
+        "name": "pdfcraft-0.22.0-linux-aarch64.tar.gz",
+        "sha256": "sha256-zhN3JlUBWOIsiHy49xAB47KdF0Gup0kuDw/0kFTi/gM=",
+        "sha256Base16": "ce137726550158e22c887cb8f71001e3b29d1741aea7492e0f0ff49054e2fe03",
+        "sumsLine": "ce137726550158e22c887cb8f71001e3b29d1741aea7492e0f0ff49054e2fe03  pdfcraft-0.22.0-linux-aarch64.tar.gz",
+        "url": "https://github.com/storytold/pdfcraft/releases/download/v0.22.0/pdfcraft-0.22.0-linux-aarch64.tar.gz"
       },
       "riscv64-linux": {
         "arch": "riscv64",
-        "name": "pdfcraft-0.21.1-linux-riscv64.tar.gz",
-        "sha256": "sha256-u08qfKy0aQE8ezyyXk1mkKqNQAgylm01uleQcC8lTxU=",
-        "sha256Base16": "bb4f2a7cacb469013c7b3cb25e4d6690aa8d400832966d35ba5790702f254f15",
-        "sumsLine": "bb4f2a7cacb469013c7b3cb25e4d6690aa8d400832966d35ba5790702f254f15  pdfcraft-0.21.1-linux-riscv64.tar.gz",
-        "url": "https://github.com/storytold/pdfcraft/releases/download/v0.21.1/pdfcraft-0.21.1-linux-riscv64.tar.gz"
+        "name": "pdfcraft-0.22.0-linux-riscv64.tar.gz",
+        "sha256": "sha256-5nFe51lcLirOcyE8yuZKpdzDOTRRwTIliaqwQp4qEPI=",
+        "sha256Base16": "e6715ee7595c2e2ace73213ccae64aa5dcc3393451c1322589aab0429e2a10f2",
+        "sumsLine": "e6715ee7595c2e2ace73213ccae64aa5dcc3393451c1322589aab0429e2a10f2  pdfcraft-0.22.0-linux-riscv64.tar.gz",
+        "url": "https://github.com/storytold/pdfcraft/releases/download/v0.22.0/pdfcraft-0.22.0-linux-riscv64.tar.gz"
       },
       "x86_64-linux": {
         "arch": "x86_64",
-        "name": "pdfcraft-0.21.1-linux-x86_64.tar.gz",
-        "sha256": "sha256-wpGekETv/eMY5mgHrSohu7dKlVWzwLmfmtDEDPYc4l4=",
-        "sha256Base16": "c2919e9044effde318e66807ad2a21bbb74a9555b3c0b99f9ad0c40cf61ce25e",
-        "sumsLine": "c2919e9044effde318e66807ad2a21bbb74a9555b3c0b99f9ad0c40cf61ce25e  pdfcraft-0.21.1-linux-x86_64.tar.gz",
-        "url": "https://github.com/storytold/pdfcraft/releases/download/v0.21.1/pdfcraft-0.21.1-linux-x86_64.tar.gz"
+        "name": "pdfcraft-0.22.0-linux-x86_64.tar.gz",
+        "sha256": "sha256-qJk/nuluh6zOz5CvQib/YKhLnheHrp/Y+kj/4Tlrw14=",
+        "sha256Base16": "a8993f9ee96e87accecf90af4226ff60a84b9e1787ae9fd8fa48ffe1396bc35e",
+        "sumsLine": "a8993f9ee96e87accecf90af4226ff60a84b9e1787ae9fd8fa48ffe1396bc35e  pdfcraft-0.22.0-linux-x86_64.tar.gz",
+        "url": "https://github.com/storytold/pdfcraft/releases/download/v0.22.0/pdfcraft-0.22.0-linux-x86_64.tar.gz"
       }
     },
-    "tag": "v0.21.1",
-    "version": "0.21.1"
+    "tag": "v0.22.0",
+    "version": "0.22.0"
   },
   "photocraft": {
     "checksumsUrl": "https://github.com/storytold/photocraft/releases/download/v0.23.1/SHA256SUMS.txt",
